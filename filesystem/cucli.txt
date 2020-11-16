@@ -1,0 +1,1 @@
+Ez a teszt file amit beolvasounk js-ből!

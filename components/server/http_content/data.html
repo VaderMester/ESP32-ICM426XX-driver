@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>cubeOS Log Interface</title>
+<meta charset="UTF-8" />
+<link type="text/css" href="log.css" rel="stylesheet" />
+</head>
+
+<body>
+<div class="table">
+	<div class="row">
+		<div class="col1">Websocket status:</div>
+		<div class="col1" id="websocketstatus"></div>
+	</div>
+	<div class="row">
+		<div class="col1">Websocket command:</div>
+		<div class="col4"><textarea rows="3" cols="80" id="websocketcommand">
+		</textarea></div>
+	</div>
+	<div class="row">
+		<div class="col1">Action</div>
+		<div class="col1"><div class="divbutton" id="send">Send command</div></div>
+	</div>
+	<div class="row">
+		<div class="col1">LOG:</div>
+	</div>
+	<div class="wrapper">
+		<ul id="list" class="list" onwheel="pauseScroll()" onmousedown="pauseScroll()" onmouseup="pauseScroll()">
+		</ul>
+	</div>
+	<p></p>
+	<div class="signiture">Made by: Bence Bujtor - "VaderMester" - <a href="https://github.com/VaderMester">https://github.com/VaderMester</a></div>
+	<p></p>
+</div>
+
+<script type="text/javascript" src="log.js"></script>
+</body>
+</html>

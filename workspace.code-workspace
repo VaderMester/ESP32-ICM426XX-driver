@@ -1,0 +1,94 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"extensions": {
+		"recommendations": [
+			"seunlanlege.action-buttons",
+			"vscode-icons-team.vscode-icons",
+		]
+	},
+	"settings": {
+		"actionButtons": {
+			"defaultColor": "#ff0034",
+		"commands": [
+				{
+					"name": "Py Menu",
+					"color": "lime",
+					"command": "powershell idf.py menuconfig"
+				},
+				{
+					"name": "Py Build",
+					"color": "orange",
+					"command": "idf.py build"
+				},
+				{
+					"name": "Encrypt",
+					"color": "red",
+					"command": "c:\\ESP_DEV\\PROJECTS\\AES_Encrypter\\bin\\Release\\AES_Encrypter.exe c:\\ESP_DEV\\PROJECTS\\Key\\key.bin c:\\ESP_DEV\\PROJECTS\\ESP_Hub\\build\\ESP-Hub.bin c:\\ESP_DEV\\PROJECTS\\ESP_Hub\\build\\ESP-Hub-Encrypted.bin"
+				},
+				{
+					"name": "Py Flash",
+					"color": "lime",
+					"command": "idf.py flash"
+				},
+				{
+					"name": "Py Monitor",
+					"color": "orange",
+					"command": "idf.py monitor"
+				},
+				{
+					"name": "Py clean",
+					"color": "white",
+					"command": "idf.py clean"
+				},
+				{
+					"name": "Py fullclean",
+					"color": "black",
+					"command": "idf.py fullclean"
+				},
+				{
+					"name": "Py eraseflash",
+					"color": "black",
+					"command": "idf.py erase_flash"
+				}
+			]
+		},
+		"terminal.integrated.shell.windows": "C:/Windows/System32/cmd.exe",
+		"workbench.iconTheme": "vscode-icons",
+		"files.associations": {
+			"esp_system.h": "c",
+			"nvs_flash.h": "c",
+			"esp_partition.h": "c",
+			"nvs.h": "c",
+			"wifi.h": "c",
+			"functional": "c",
+			"optional": "c",
+			"regex": "c",
+			"system_error": "c",
+			"type_traits": "c",
+			"xlocmon": "c",
+			"xtr1common": "c",
+			"esp_event_loop.h": "c",
+			"esp_event.h": "c",
+			"sstream": "c",
+			"strstream": "c",
+			"random": "c",
+			"restart_interface.h": "c",
+			"array": "c",
+			"vector": "c",
+			"xstring": "c",
+			"xutility": "c",
+			"websocket_server.h": "c",
+			"server_private.h": "c",
+			"duktape_utils.h": "c",
+			"logging.h": "c",
+			"module_dukf.h": "c",
+			"dukf_utils.h": "c",
+			"*.inc": "c",
+			"*.ipp": "c"
+		}
+	}
+}
