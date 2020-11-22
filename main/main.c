@@ -11,9 +11,11 @@
 //#include "c_eventloop.h"      //TODO to make setTimeout and setInterval work
 #include "module_cubeos.h"
 #include "module_GFX.h"
+#include "module_motion.h"
 #include "dukf_utils.h"
 #include <jsfileio.h>
 #include "soc/lldesc.h"
+#include <driver/gpio.h>
 
 #include <mdns.h>
 #include <wifilog.h>
@@ -24,6 +26,7 @@
 #include "sntp_component.h"
 
 #include <MPU6050_lite.h>
+#include <leddisplay.h>
 
 #define LOGNAME "cubeOS"
 #define HOSTNAME "cubeos.local"
@@ -36,6 +39,8 @@
 
 #define OS_CPU 0
 #define JS_CPU 1
+
+#define GPIO_UART_RX GPIO_NUM_3
 
 #define WIFI_ALLOW_SCAN true
 
@@ -77,6 +82,7 @@ static duk_context *ctx;
 static TaskHandle_t xJShandle = NULL;
 static TaskHandle_t xSuspend = NULL;
 static TaskHandle_t xSNTPtask = NULL;
+static TaskHandle_t xWifiConnectTask = NULL;
 
 //int32_t AccelGyro_OK = false;
 
@@ -126,7 +132,7 @@ static void js_restart(void) {
         ESP_LOGE(LOGNAME, "JS Context still exists, DELETING!");
         ctx = NULL;
     }
-    xTaskCreatePinnedToCore(sJSinit, "JS init", 8000, NULL, 6, NULL, JS_CPU);
+    xTaskCreatePinnedToCore(sJSinit, "JS init", 8000, NULL, 1, NULL, JS_CPU);
 }
 
 static void js_fatal_handler(void *udata, const char *msg) {
@@ -151,7 +157,7 @@ static void sWifiInit(void *pParam)
         xSemaphoreTake(accelGyroInitialized, portMAX_DELAY);
         wifi_set_sta_creds(ssid, wifipw);
         xSemaphoreGive(xWifiConnected);
-        xTaskCreatePinnedToCore(sWifiConnectTask, "SNTP task", 6000, NULL, 8, &xSNTPtask, OS_CPU);
+        xTaskCreatePinnedToCore(sWifiConnectTask, "WifiConnect", 5000, NULL, 4, &xWifiConnectTask, OS_CPU);
     } else {
         esp_restart();
     }
@@ -172,7 +178,7 @@ static void sWifiConnectTask(void *pParam)
     }
     //ESP_LOGW(LOGNAME, "WiFi: %s", connectstatus ? "Connected" : "Not connected");
     if(connectstatus) {
-        xTaskCreatePinnedToCore(sSTNPtask, "SNTP task", 5000, NULL, 8, &xSNTPtask, OS_CPU);
+        xTaskCreatePinnedToCore(sSTNPtask, "SNTP task", 3000, NULL, 8, &xSNTPtask, OS_CPU);
     }
     xSemaphoreGive(xWifiConnected);
     vTaskDelete(NULL);
@@ -233,8 +239,9 @@ static void sJSinit(void *pParam)
         jsfileio_init(ctx);
         dukf_modSearch_register(ctx);
         cubeos_module_register(ctx);
+        motion_module_register(ctx);
         INFO("Starting JS task");
-        xTaskCreatePinnedToCore(sJSTask, "JS main", 12000, NULL, 5, &xJShandle, JS_CPU);
+        xTaskCreatePinnedToCore(sJSTask, "JS main", 10000, NULL, 1, &xJShandle, JS_CPU);
         sDumpMemInfo();
     }
     vTaskDelete(NULL);
@@ -251,7 +258,7 @@ static void sJSTask(void *pParam)
         //jsfileio must be inited before modsearch is registered.
         gfx_module_register(ctx);
         //sDumpMemInfo();
-        xTaskCreatePinnedToCore(sSuspendJS, "JS suspend task", 2000, NULL, 5, &xSuspend, OS_CPU);
+        xTaskCreatePinnedToCore(sSuspendJS, "JS suspend task", 2000, NULL, 2, &xSuspend, OS_CPU);
         const char *startfile = getStartJSfile(); //load config
         if(startfile)
         {
@@ -356,18 +363,26 @@ static void duktape_fs_test(void * parameter) {
 */
 
 void app_main(void) {
+    leddisplay_init_power_en_gpio();
+    leddisplay_set_power_state(0);
     //sDumpMemInfo();
+    //SETUP UART-RX as GPIO OUTPUT
+    gpio_pad_select_gpio(GPIO_UART_RX);
+    gpio_set_direction(GPIO_UART_RX, GPIO_MODE_OUTPUT_OD);
+    //gpio_set_direction(GPIO_UART_RX, GPIO_MODE_OUTPUT_OD);
+    gpio_set_pull_mode(GPIO_UART_RX, GPIO_PULLDOWN_ONLY);
+    gpio_set_level(GPIO_UART_RX, 1);
     accelGyroInitialized = xSemaphoreCreateBinary();
     xWifiConnected = xSemaphoreCreateBinaryStatic(&xWifiConnectedBuf);
     xTaskCreatePinnedToCore(sAccelGyroInitTask, "AccelGyro Init", 5000, NULL, 5, NULL, JS_CPU);
-    xTaskCreatePinnedToCore(sWifiInit, "Wifi init", 12000, NULL, 5, NULL, OS_CPU);
+    xTaskCreatePinnedToCore(sWifiInit, "Wifi init", 12000, NULL, 4, NULL, OS_CPU);
     set_time_env_var("CET-1CEST-2,M3.4.0/01:00:00,M10.4.0/02:00:00");   //Settimezone Variable
     xSemaphoreTake(accelGyroInitialized, portMAX_DELAY);
-    xTaskCreatePinnedToCore(sStartmDNS, "mDNS init", 8000, NULL, 5, NULL, OS_CPU);
+    xTaskCreatePinnedToCore(sStartmDNS, "mDNS init", 4000, NULL, 7, NULL, OS_CPU);
     xTaskCreatePinnedToCore(sServerInit, "Terminal Server init", 12000, NULL, 5, NULL, OS_CPU);
     xTaskCreatePinnedToCore(sInitGFXTask, "GFX Init", 8000, NULL, 5, NULL, JS_CPU);
     osSleep(1000);
     xSemaphoreGive(accelGyroInitialized);       //sJSinit task is goint to take this
-    xTaskCreatePinnedToCore(sJSinit, "JS init", 8000, NULL, 6, NULL, JS_CPU);
-    sDumpMemInfo();
+    xTaskCreatePinnedToCore(sJSinit, "JS init", 7000, NULL, 6, NULL, JS_CPU);
+    osSleep(1000);
 }

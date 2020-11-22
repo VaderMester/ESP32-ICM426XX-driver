@@ -1001,12 +1001,10 @@ esp_err_t leddisplay_init_multipanel(void)
         };
 
         esp_err_t res2 = i2s_parallel_setup(&I2S1, &cfg);
-        /*
-        gpio_pad_pullup(CONFIG_LEDDISPLAY_LAT_GPIO);
-        gpio_pad_pullup(CONFIG_LEDDISPLAY_OE0_GPIO);
-        gpio_pad_pullup(CONFIG_LEDDISPLAY_OE1_GPIO);
-        gpio_pad_pullup(CONFIG_LEDDISPLAY_OE2_GPIO);
-        */
+
+        gpio_set_pull_mode(CONFIG_LEDDISPLAY_LAT_GPIO, GPIO_PULLUP_ONLY);
+        gpio_set_pull_mode(CONFIG_LEDDISPLAY_OE_GPIO, GPIO_PULLUP_ONLY);
+
         if (res2 != ESP_OK)
         {
             WARNING("i2s fail (%d, %s)", res, esp_err_to_name(res));
@@ -1085,6 +1083,25 @@ esp_err_t leddisplay_displaybuffer_init(uint8_t bufferindex)
     }
     return res;
 }
+
+#ifdef CONFIG_LEDDISPLAY_PWR_EN_GPIO
+
+void leddisplay_init_power_en_gpio(void) {
+    gpio_pad_select_gpio(CONFIG_LEDDISPLAY_PWR_EN_GPIO);
+    gpio_set_pull_mode(CONFIG_LEDDISPLAY_PWR_EN_GPIO, GPIO_PULLUP_ONLY);
+    gpio_set_direction(CONFIG_LEDDISPLAY_PWR_EN_GPIO, GPIO_MODE_OUTPUT_OD);
+    gpio_set_level(CONFIG_LEDDISPLAY_PWR_EN_GPIO, 0);
+}
+
+void leddisplay_set_power_state(uint32_t state) {
+    gpio_set_level(CONFIG_LEDDISPLAY_PWR_EN_GPIO, state ? 0 : 1);
+}
+
+uint32_t leddisplay_get_power_state(void) {
+    return gpio_get_level(CONFIG_LEDDISPLAY_PWR_EN_GPIO) ? 0 : 1;
+}
+#endif //#ifdef CONFIG_LEDDISPLAY_PWR_EN_GPIO
+
 
 /*
 IRAM_ATTR void leddisplay_panels_set_dispbuf_ready(unsigned int dispbufindex) {

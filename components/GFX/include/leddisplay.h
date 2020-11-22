@@ -220,6 +220,19 @@ typedef union leddisplay_frame_u
 */
 esp_err_t leddisplay_init_multipanel(void);
 
+
+
+#ifdef CONFIG_LEDDISPLAY_PWR_EN_GPIO
+/* Power enable API
+*   I recommend using a P-type Mosfet, like the Si2319CD, which is a SOT-23 package, with 4,4A max current
+*/
+void leddisplay_init_power_en_gpio(void);
+void leddisplay_set_power_state(uint32_t state);
+uint32_t leddisplay_get_power_state(void);
+#endif //#ifdef CONFIG_LEDDISPLAY_PWR_EN_GPIO
+
+
+
 /*! initialise the LED display with MultiPanel Display Buffer given by "bufferindex"
 These Diplay buffer will be used to write pixel data to, from which
 the matrix driver will convert into DMA data to be output to the matrix panels
@@ -643,6 +656,7 @@ void sDisplayUpdateTask(void *pParam);
           from scratch.
 */
 void leddisplay_frame_update_index(leddisplay_frame_t *p_frame, uint8_t index);
+
 //@}
 
 /* *********************************************************************************************** */

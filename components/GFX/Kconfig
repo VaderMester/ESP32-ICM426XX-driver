@@ -139,6 +139,14 @@ menu "LED Display"
 
     endchoice
 
+    config LEDDISPLAY_PWR_EN_GPIO
+        int "GPIO for POWER ENABLE"
+        default 32
+        range 32 33
+        help
+            GPIO for LEDDISPLAY POWER ENABLE. Use this, if you use this to turn on/off power to the display.
+            Useful for removing power completely when it's not in use, or during sleep
+
     config LEDDISPLAY_R1_GPIO
         int "GPIO for the R1 signal"
         default 2

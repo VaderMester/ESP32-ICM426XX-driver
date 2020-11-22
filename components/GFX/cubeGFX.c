@@ -115,13 +115,15 @@ inline uint8_t *pgm_read_bitmap_ptr(const GFXfont *gfxFont)
 void sGFXinitTask(void *pParam)
 {
     INFO("init display");
-    esp_err_t initres = leddisplay_init_multipanel();
-    esp_err_t dispAres = ESP_OK;
-    esp_err_t dispBres = ESP_OK;
-    if (initres == ESP_OK)
+    if (leddisplay_init_multipanel() == ESP_OK)
     {
-        dispAres = leddisplay_displaybuffer_init(0);
-        dispBres = leddisplay_displaybuffer_init(1);
+        for(int i = 0; i < CONFIG_LEDDISPLAY_NUM_DISP_BUFFER; i++) {
+            if(leddisplay_displaybuffer_init(i) != ESP_OK) {
+                ERROR(":-(, init of Displaybuffers failed");
+                osSleep(2000);
+                vTaskDelete(NULL);
+            }
+        }
     }
     else
     {
@@ -129,14 +131,6 @@ void sGFXinitTask(void *pParam)
         osSleep(2000);
         vTaskDelete(NULL);
     }
-    /*
-    if ((dispAres != ESP_OK) || (dispBres != ESP_OK))
-    {
-        ERROR(":-(, init of Displaybuffers failed");
-        osSleep(2000);
-        vTaskDelete(NULL);
-    }
-    */
     WARNING("INIT OK");
     
     BaseType_t update;

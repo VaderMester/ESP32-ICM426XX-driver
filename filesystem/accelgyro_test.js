@@ -1,5 +1,5 @@
 var FPS = 24;       //Actual frametime setting
-var animFPS = 1;    //what the animation will actually do.
+var animFPS = 2;    //what the animation will actually do.
 var currf = 0;
 //var workingFrames = Math.ceil(80/(1000/FPS));
 var workingFrames = 0;
@@ -20,9 +20,9 @@ function vector(x, y, z) {
 
 var accelGyro = new Array(6);
 var accelVector = new vector();
-var gyrotresholdP = 15000;
+var gyrotresholdP = 200;
 var gyrotresholdN = gyrotresholdP*-1;
-var accelTreshold = 10000;
+var accelTreshold = 160;
 
 var LEFT = 1;
 var RIGHT = 2;
@@ -37,12 +37,12 @@ function handleDummyFrames(dummyf) {
     var readcnt = 0;
     var dirstr = "  ";
     var prevAccel = {ax: accelGyro[0], ay: accelGyro[1], az: accelGyro[2]};
-    while(i < dummyf-1) {
+    while(i < dummyf) {
         GFX.start();
-        accelGyro = cubeOS.getAccelGyro();
+        accelGyro = Motion.getAccelGyro();
         //print("ax: " + accelGyro[0] + "; ay: " + accelGyro[1] + "; az: " + accelGyro[2] + "; gx: " + accelGyro[3] + "; gy: " + accelGyro[4] + "; gz: " + accelGyro[5]);
         if(currentDirection == 0) {
-            currentDirection = getDirection(10, accelGyro[3], accelGyro[4], accelGyro[5]);
+            currentDirection = getDirection(10, gyrotresholdP, gyrotresholdP);
             readcnt++;
         }
         if(shaken == false) {
@@ -72,6 +72,107 @@ function detectShake(pax, pay, paz, ax, ay, az, threshold) {
     }
 }
 
+function getDirection(snakex, thresholdP, thresholdN) {
+    var gyrodir = Motion.getGyroDir(0, thresholdP, thresholdN);
+    //Z change is panel independent
+    if (snakex < 32) {
+        //Panel 0
+        switch (gyrodir) {
+            case 0:
+                return 0;
+            case -1:
+                return UP;
+            case 1:
+                return DN;
+            case -3:
+                return LEFT;
+            case 3:
+                return RIGHT;
+            default:
+                return 0;
+        }
+    } else if (snakex < 64) {
+        //Panel 1
+        switch (gyrodir) {
+            case 0:
+                return 0;
+            case -2:
+                return UP;
+            case 2:
+                return DN;
+            case -3:
+                return LEFT;
+            case 3:
+                return RIGHT;
+            default:
+                return 0;
+        }
+    } else if (snakex < 96) {
+        //Panel 2
+        switch (gyrodir) {
+            case 0:
+                return 0;
+            case 1:
+                return UP;
+            case -1:
+                return DN;
+            case -3:
+                return LEFT;
+            case 3:
+                return RIGHT;
+            default:
+                return 0;
+        }
+    } else if (snakex < 128) {
+        //Panel 3
+        switch (gyrodir) {
+            case 0:
+                return 0;
+            case 2:
+                return UP;
+            case -2:
+                return DN;
+            case -3:
+                return LEFT;
+            case 3:
+                return RIGHT;
+            default:
+                return 0;
+        }
+    } else if (snakex < 160) {
+        switch (gyrodir) {
+            case 0:
+                return 0;
+            case 1:
+                return UP;
+            case -1:
+                return DN;
+            case 3:
+                return LEFT;
+            case -3:
+                return RIGHT;
+            default:
+                return 0;
+        }
+    } else {
+        switch (gyrodir) {
+            case 0:
+                return 0;
+            case -1:
+                return UP;
+            case 1:
+                return DN;
+            case -3:
+                return LEFT;
+            case 3:
+                return RIGHT;
+            default:
+                return 0;
+        }
+    }
+}
+
+/*
 function getDirection(snakex, gx, gy, gz)
 {
     //Z change is panel independent
@@ -99,7 +200,7 @@ function getDirection(snakex, gx, gy, gz)
     }
     return 0;
 }
-
+*/
 var cycle = 0;
 function main() {
 shaken = false;

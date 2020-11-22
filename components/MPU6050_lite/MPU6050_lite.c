@@ -19,11 +19,31 @@
 
 const char *TAG = "AccelGyro";
 
+#define MPU6050_GYRO_SCALE MPU6050_GYRO_FS_500
+#define MPU6050_ACCEL_SCALE MPU6050_ACCEL_FS_2
+
+#if MPU6050_ACCEL_SCALE == MPU6050_ACCEL_FS_2
+    #define ACCEL_CALIB 164
+#elif MPU_ACCEL_SCALE == MPU6050_ACCEL_FS_4
+    #define ACCEL_CALIB 82
+#elif MPU_ACCEL_SCALE == MPU6050_ACCEL_FS_8
+    #define ACCEL_CALIB 41;
+#else
+  #define ACCEL_CALIB 1
+#endif//if MPU6050_ACCEL_SCALE
+
+#if MPU6050_GYRO_SCALE == MPU6050_GYRO_FS_250
+    #define GYRO_CALIB 131
+#elif MPU6050_GYRO_SCALE == MPU6050_GYRO_FS_500
+    #define GYRO_CALIB 65
+#elif MPU6050_GYRO_SCALE == MPU6050_GYRO_FS_1000
+    #define GYRO_CALIB 33
+#else
+  #define GYRO_CALIB 1
+#endif//if MPU6050_GYRO_SCALE
 
 uint8_t devAddr;
 uint8_t buffer[14];
-
-
 
 const char LBRACKET = '[';
 const char RBRACKET = ']';
@@ -119,6 +139,13 @@ void getAccelGyro(int16_t* ax, int16_t* ay, int16_t* az, int16_t* gx, int16_t* g
     xSemaphoreGive(mpuSem);
     */
     MPU6050_getMotion6(ax, ay, az, gx, gy, gz);
+    *ax = (int16_t)(*ax/ACCEL_CALIB);
+    *ay = (int16_t)(*ay/ACCEL_CALIB);
+    *az = (int16_t)(*az/ACCEL_CALIB);
+
+    *gx = (int16_t)(*gx/GYRO_CALIB);
+    *gy = (int16_t)(*gy/GYRO_CALIB);
+    *gz = (int16_t)(*gz/GYRO_CALIB);
 }
 
 void MPU6050_setClockSource(uint8_t source) {
@@ -245,8 +272,8 @@ void MPU6050_initialize() {
 	I2Cdev_init();
 	devAddr=0x68;
 	MPU6050_setClockSource(MPU6050_CLOCK_PLL_XGYRO);
-	MPU6050_setFullScaleGyroRange(MPU6050_GYRO_FS_250);
-	MPU6050_setFullScaleAccelRange(MPU6050_ACCEL_FS_2);
+	MPU6050_setFullScaleGyroRange(MPU6050_GYRO_SCALE);
+	MPU6050_setFullScaleAccelRange(MPU6050_ACCEL_SCALE);
 	MPU6050_setSleepEnabled(false); // thanks to Jack Elston for pointing this one out!
 	ESP_LOGI(TAG, "%s", MPU6050_testConnection() ? "MPU6050 connection successful\n" : "MPU6050 connection failed\n");
 }

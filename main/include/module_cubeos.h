@@ -1,5 +1,5 @@
-#if !defined(_MODULE_DUKF)
-#define _MODULE_DUKF
+#if !defined(_MODULE_CUBEOS)
+#define _MODULE_CUBEOS
 
 #include <stdio.h>
 

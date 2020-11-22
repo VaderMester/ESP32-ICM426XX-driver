@@ -104,6 +104,7 @@ static duk_ret_t gfx_setTextWrap(duk_context *ctx);
 static duk_ret_t gfx_printText(duk_context *ctx);
 static duk_ret_t gfx_getCursor(duk_context *ctx);
 
+
 //int16_t cube_gfx_width(void);
 //int16_t cube_gfx_height(void);
 //uint8_t cube_gfx_getRotation(void);

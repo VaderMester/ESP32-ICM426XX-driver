@@ -10,9 +10,9 @@
 
 #include "duktape_utils.h"
 #include "dukf_utils.h"
+#include <leddisplay.h>
 
 #include "module_cubeos.h"
-#include <MPU6050_lite.h>
 
 #define LOGNAME "cubeOS"
 #define ERROR(fmt, ...)   ESP_LOGE(LOGNAME, fmt, ## __VA_ARGS__)
@@ -108,28 +108,24 @@ static duk_ret_t js_cubeos_sleep(duk_context *ctx) {
 	return 0;
 } // js_cubeos_sleep
 
-static duk_ret_t js_cubeos_readAccelGyro(duk_context *ctx) {
-	int16_t ax, ay, az, gx, gy, gz;
-	getAccelGyro(&ax, &ay, &az, &gx, &gy, &gz);
-	//WARNING("ax: %i, ax: %i, ay: %i, gx: %i, gy: %i, gz: %i", ax, ay, az, gx, gy, gz);
-	duk_idx_t arr_idx;
-	arr_idx = duk_push_array(ctx);
-	duk_push_int(ctx, ax);
-	duk_put_prop_index(ctx, arr_idx, 0);
-	duk_push_int(ctx, ay);
-	duk_put_prop_index(ctx, arr_idx, 1);
-	duk_push_int(ctx, az);
-	duk_put_prop_index(ctx, arr_idx, 2);
+/*
+nArgs: 1
+IDX:
+0: State
+*/
+static duk_ret_t js_cubeos_setDisplayPowerState(duk_context *ctx) {
+	leddisplay_set_power_state(duk_get_boolean(ctx, 0));
+	return 0;
+}
 
-	duk_push_int(ctx, gx);
-	duk_put_prop_index(ctx, arr_idx, 3);
-	duk_push_int(ctx, gy);
-	duk_put_prop_index(ctx, arr_idx, 4);
-	duk_push_int(ctx, gz);
-	duk_put_prop_index(ctx, arr_idx, 5);
-	//duk_pop(ctx);
+/*
+nArgs: 0
+Return: state as bool
+*/
+static duk_ret_t js_cubeos_getDisplayPowerState(duk_context *ctx) {
+	duk_push_boolean(ctx, leddisplay_get_power_state());
 	return 1;
-} // js_cubeos_sleep
+}
 
 static duk_function_list_entry cubeos_funcs[] = {
 	{"gc",          js_cubeos_gc,         1},
@@ -138,7 +134,8 @@ static duk_function_list_entry cubeos_funcs[] = {
 	{"delay",       js_cubeos_sleep,      1},
 	{"writeFile",	cubeos_write_file,	2},
 	{"readFile",	cubeos_read_file,	2},
-	{"getAccelGyro", js_cubeos_readAccelGyro, 0},
+	{"setDisplayPowerState", js_cubeos_setDisplayPowerState, 1},
+	{"getDisplayPowerState", js_cubeos_getDisplayPowerState, 0},
 	{ NULL, NULL, 0 }
 };
 
