@@ -25,11 +25,6 @@
 					"command": "idf.py build"
 				},
 				{
-					"name": "Encrypt",
-					"color": "red",
-					"command": "c:\\ESP_DEV\\PROJECTS\\AES_Encrypter\\bin\\Release\\AES_Encrypter.exe c:\\ESP_DEV\\PROJECTS\\Key\\key.bin c:\\ESP_DEV\\PROJECTS\\ESP_Hub\\build\\ESP-Hub.bin c:\\ESP_DEV\\PROJECTS\\ESP_Hub\\build\\ESP-Hub-Encrypted.bin"
-				},
-				{
 					"name": "Py Flash",
 					"color": "lime",
 					"command": "idf.py flash"
