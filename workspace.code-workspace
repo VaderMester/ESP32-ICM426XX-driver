@@ -83,7 +83,29 @@
 			"module_dukf.h": "c",
 			"dukf_utils.h": "c",
 			"*.inc": "c",
-			"*.ipp": "c"
+			"*.ipp": "c",
+			"example-algo.h": "c",
+			"system-interface.h": "c",
+			"ringbuffer.h": "c",
+			"helperclockcalib.h": "c",
+			"icm426xxtransport.h": "c",
+			"invn_algo_agm.h": "c",
+			"esp_attr.h": "c",
+			"task.h": "c",
+			"esp_log.h": "c",
+			"freertos.h": "c",
+			"time.h": "c",
+			"esp_sntp.h": "c",
+			"icm426xxdefs.h": "c",
+			"icm426xx.h": "c",
+			"ak0991x.h": "c",
+			"icm426xxextfunc.h": "c",
+			"icm426xxdriver_hl.h": "c",
+			"sdkconfig.h": "c",
+			"i2cdev.h": "c",
+			"icm426xxdriver_hl_apex.h": "c",
+			"esp_err.h": "c",
+			"logmacro.h": "c"
 		}
 	}
 }

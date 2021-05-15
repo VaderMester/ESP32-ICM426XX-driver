@@ -1,0 +1,40 @@
+menu "I2Cdev (I2C master mode driver) component config"
+
+    config I2CDEV_SCL_DEF_GPIO
+        int "Default GPIO for SCL"
+        default 22
+        range 0 47
+        help
+            Default GPIO for the SCL signal. When calling I2Cdev_init(),
+            users can pas the SDA and SCL pin numbers of their choice.
+            If either is passed as -1, the default will be used
+
+    config I2CDEV_SCL_PULLUP_EN
+        bool "Internal Pull-Up enable for SCL"
+        default true
+        help
+            Select this to enable inernal pull-up for SCL signal
+
+    config I2CDEV_SDA_PULLUP_EN
+        bool "Internal Pull-Up enable for SDA"
+        default true
+        help
+            Select this to enable inernal pull-up for SDA signal
+
+    config I2CDEV_SDA_DEF_GPIO
+        int "Default GPIO for SDA"
+        default 21
+        range 0 47
+        help
+            Default GPIO for the SDA signal. When calling I2Cdev_init(),
+            users can pas the SDA and SCL pin numbers of their choice.
+            If either is passed as -1, the default will be used
+
+    config I2CDEV_DEF_SCL_FREQ
+        int "Default master SCL frequency, in Hz"
+        default 400000
+        range 100000 1000000
+        help
+            Master SCL frequency of the I2C peripheral. Set when calling I2Cdev_init().
+
+endmenu

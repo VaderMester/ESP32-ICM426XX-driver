@@ -2,7 +2,7 @@
  * ________________________________________________________________________________________________________
  * Copyright (c) 2017 InvenSense Inc. All rights reserved.
  *
- * This software, related documentation and any modifications thereto (collectively “Software”) is subject
+ * This software, related documentation and any modifications thereto (collectively ï¿½Softwareï¿½) is subject
  * to InvenSense and its licensors' intellectual property rights under U.S. and international copyright
  * and other intellectual property rights laws.
  *
@@ -29,18 +29,30 @@
 #include "Invn/EmbUtils/RingBuffer.h"
 
 /* board driver */
-#include "common.h"
-#include "uart_mngr.h"
-#include "delay.h"
-#include "gpio.h"
-#include "timer.h"
-#include "rtc_timer.h"
 
 #include "system-interface.h"
 
 /* std */
 #include <stdio.h>
+#include <stdarg.h>
+#include <string.h>
+#include "esp_attr.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/ringbuf.h"
+#include "freertos/queue.h"
+#include "driver/uart.h"
+#include "esp_log.h"
+#include "sdkconfig.h"
+#include "time.h"
+#include <sys/time.h>
+#include "esp_system.h"
+#include "esp_sntp.h"
+#include "driver/gpio.h"
 
+#include "ICM426XX.h"
+
+#define TAG "ICM426XX"
 
 /* --------------------------------------------------------------------------------------
  *  Example configuration
@@ -54,10 +66,15 @@
 /* 
  * Select communication link between SmartMotion and ICM426xx 
  */
-#define SERIF_TYPE ICM426XX_UI_SPI4
-//#define SERIF_TYPE ICM426XX_UI_I2C
+//#define SERIF_TYPE ICM426XX_UI_SPI4
+#define SERIF_TYPE ICM426XX_UI_I2C
 
-/* 
+/*
+* Set INT1 interrupt pin
+*/
+#define INV_GPIO_INT1 CONFIG_I2CM426XX_DEV_INT1_GPIO
+
+/*
  * Define msg level 
  */
 #define MSG_LEVEL INV_MSG_LEVEL_INFO
@@ -70,7 +87,14 @@
 #define MAG_SAMPLING_TIMER INV_TIMER3
 #define MAG_DATA_TIMER     INV_TIMER4
 
-
+DRAM_ATTR const char * INV_LOGLEVEL[INV_MSG_LEVEL_MAX] = {
+		"",    // INV_MSG_LEVEL_OFF
+		"[E] ", // INV_MSG_LEVEL_ERROR
+		"[W] ", // INV_MSG_LEVEL_WARNING
+		"[I] ", // INV_MSG_LEVEL_INFO
+		"[V] ", // INV_MSG_LEVEL_VERBOSE
+		"[D] ", // INV_MSG_LEVEL_DEBUG
+};
 /* --------------------------------------------------------------------------------------
  *  Global variables
  * -------------------------------------------------------------------------------------- */
@@ -122,16 +146,25 @@ int mag_init_successful = 0;
 #define MAG_DATA_RDY_DELAY_US     4200  /* Typical time for the compass to generate a data */
 #endif
 
+/* MUX for entering critical section */
+static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 /* Flag set once a UART RX frame is received */
 volatile int irq_event_main_uart = 1;//0;
+static QueueHandle_t uart0_queue;
+const uint16_t uart_bufs = 1024;
+uint8_t *uart_cmd_buf = NULL;
+SemaphoreHandle_t sCmdSem;
 
+#define EX_UART_NUM UART_NUM_0
+#define ESP_INTR_FLAG_DEFAULT 0
+#define GPIO_INPUT_PIN_SEL  (1ULL<<INV_GPIO_INT1)
 
 /* --------------------------------------------------------------------------------------
  *  Forward declaration
  * -------------------------------------------------------------------------------------- */
 
 static int SetupMCUHardware(struct inv_icm426xx_serif * icm_serif, struct inv_ak0991x_serif *akm_serif);
-static void ext_interrupt_inv_cb(void * context, unsigned int_num);
+static void IRAM_ATTR ext_interrupt_inv_cb(void * context);
 #if USE_MAG
 static void interrupt_timer_start_mag_cb(void* context);
 static void interrupt_timer_data_rdy_mag_cb(void *context);
@@ -142,12 +175,15 @@ static void print_help(void);
 void check_rc(int rc, const char * msg_context);
 void msg_printer(int level, const char * str, va_list ap);
 
+void ESP32_uart_event_task(void *pvParameters);
+void ESP32_setup_uart(void);
+uint64_t ESP32_get_time_us();
 
 /* --------------------------------------------------------------------------------------
  *  Main
  * -------------------------------------------------------------------------------------- */
 
-int main(void)
+void app_main(void)
 {
 	int rc = 0;
 	struct inv_icm426xx_serif icm426xx_serif;
@@ -204,9 +240,9 @@ int main(void)
 		if (mag_init_successful) {
 			/* Check Ak09915 IRQ */
 			if (irq_from_ak09915_data_ready) {
-				inv_disable_irq();
+				portENTER_CRITICAL(&mux);
 				irq_from_ak09915_data_ready = 0;
-				inv_enable_irq();
+				portEXIT_CRITICAL(&mux);
 
 				rc = GetDataFromMagDevice();
 				check_rc(rc, "error while getting data from Akm09915");
@@ -214,9 +250,9 @@ int main(void)
 			
 			/* Check IRQ from timer ruling mag acquisition */
 			if (irq_from_ak09915_acquisition_timer) {
-				inv_disable_irq();
+				portENTER_CRITICAL(&mux);
 				irq_from_ak09915_acquisition_timer = 0;
-				inv_enable_irq();
+				portEXIT_CRITICAL(&mux);
 
 				StartMagDeviceAcquisition();
 
@@ -233,9 +269,9 @@ int main(void)
 			rc = GetDataFromInvDevice();
 			check_rc(rc, "error while getting data from Icm426xx");
 
-			inv_disable_irq();
+			portENTER_CRITICAL(&mux);
 			irq_from_device &= ~TO_MASK(INV_GPIO_INT1);
-			inv_enable_irq();
+			portEXIT_CRITICAL(&mux);
 		}
 		
 		if (irq_event_main_uart)
@@ -267,9 +303,8 @@ void process_user_command(void)
 		case '6': data_to_print ^= MASK_PRINT_6AXIS_DATA;          break; /* Print 6 axis data */ 
 
 		case 'r':
-			rc  = ResetInvAGMBiases();
-			rc |= InitInvAGMAlgo();
-			check_rc(rc, "Error while initializing VR Threedof algorithms");
+			ResetInvAGMBiases();
+			ICM_MSG(INV_MSG_LEVEL_INFO, "Reset command received");
 			break; 
 		case 'f': /* Toggle fast-mode (data printed every 20 ms or every 1 s) */
 			print_period_us = (print_period_us == 1000000/*1s*/) ? 20000/*20ms*/ : 1000000/*1s*/;
@@ -318,6 +353,110 @@ void ext_interrupt_uart_main_cb(void * context)
 	irq_event_main_uart = 1;
 }
 
+void ESP32_uart_event_task(void *pvParameters)
+{
+    uart_event_t event;
+    size_t buffered_size;
+    uart_cmd_buf = (uint8_t*) malloc(uart_bufs);
+	if(!uart_cmd_buf) {
+		ESP_LOGE("UART BUFFER ERR: NOT ENOUGH MEMORY, ABORTING");
+		abort();
+	}
+    for(;;) {
+        //Waiting for UART event.
+        if(xQueueReceive(uart0_queue, (void * )&event, (portTickType)portMAX_DELAY)) {
+            bzero(uart_cmd_buf, uart_bufs);
+            ESP_LOGI(TAG, "uart[%d] event:", EX_UART_NUM);
+            switch(event.type) {
+                //Event of UART receving data
+                /*We'd better handler data event fast, there would be much more data events than
+                other types of events. If we take too much time on data event, the queue might
+                be full.*/
+                case UART_DATA:
+                    ESP_LOGI(TAG, "[UART DATA]: %d", event.size);
+					xSemaphoreTake(sCmdSem, portMAX_DELAY);
+                    uart_read_bytes(EX_UART_NUM, uart_cmd_buf, event.size, portMAX_DELAY);
+                    xSemaphoreGive(sCmdSem);
+					ext_interrupt_inv_cb();
+                    break;
+                //Event of HW FIFO overflow detected
+                case UART_FIFO_OVF:
+                    ESP_LOGI(TAG, "hw fifo overflow");
+                    // If fifo overflow happened, you should consider adding flow control for your application.
+                    // The ISR has already reset the rx FIFO,
+                    // As an example, we directly flush the rx buffer here in order to read more data.
+                    uart_flush_input(EX_UART_NUM);
+                    xQueueReset(uart0_queue);
+                    break;
+                //Event of UART ring buffer full
+                case UART_BUFFER_FULL:
+                    ESP_LOGI(TAG, "ring buffer full");
+                    // If buffer full happened, you should consider encreasing your buffer size
+                    // As an example, we directly flush the rx buffer here in order to read more data.
+                    uart_flush_input(EX_UART_NUM);
+                    xQueueReset(uart0_queue);
+                    break;
+                //Event of UART RX break detected
+                case UART_BREAK:
+                    ESP_LOGE(TAG, "uart rx break");
+                    break;
+                //Event of UART parity check error
+                case UART_PARITY_ERR:
+                    ESP_LOGE(TAG, "uart parity error");
+                    break;
+                //Event of UART frame error
+                case UART_FRAME_ERR:
+                    ESP_LOGE(TAG, "uart frame error");
+                    break;
+                //UART_PATTERN_DET
+                case UART_PATTERN_DET:
+                    break;
+                //Others
+                default:
+                    ESP_LOGE(TAG, "uart event type: %d", event.type);
+                    break;
+            }
+        }
+    }
+    free(uart_cmd_buf);
+    uart_cmd_buf = NULL;
+    vTaskDelete(NULL);
+}
+
+void ESP32_setup_uart(void)
+{
+    uart_config_t uart_config = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_APB,
+    };
+    //Install UART driver, and get the queue.
+    uart_driver_install(EX_UART_NUM, uart_bufs * 2, uart_bufs * 2, 20, &uart0_queue, 0);
+    uart_param_config(EX_UART_NUM, &uart_config);
+
+    //Set UART pins (using UART0 default pins ie no changes.)
+    uart_set_pin(EX_UART_NUM, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+
+
+	sCmdSem = xSemaphoreCreateBinary();
+	xSemaphoreGive(sCmdSem);
+    //Create a task to handler UART event from ISR
+    xTaskCreate(ESP32_uart_event_task, "uart_event_task", 2048, NULL, 12, NULL);
+}
+
+uint64_t ESP32_get_time_us()
+{
+	struct timeval tv_now;
+	gettimeofday(&tv_now, NULL);
+	uint64_t time_us = (uint64_t)tv_now.tv_sec * 1000000L + (uint64_t)tv_now.tv_usec;
+	return time_us;
+}
+
+
+
 /*
  * This function initializes MCU on which this software is running.
  * It configures:
@@ -334,10 +473,9 @@ static int SetupMCUHardware(struct inv_icm426xx_serif * icm_serif, struct inv_ak
 {
 	int rc = 0;
 
-	inv_io_hal_board_init();
-
 	/* configure UART */
-	config_uart(LOG_UART_ID);
+	//Setup uart0 to receive commands
+	ESP32_setup_uart();
 
 	/* Setup message facility to see internal traces from FW */
 	INV_MSG_SETUP(MSG_LEVEL, msg_printer);
@@ -347,17 +485,30 @@ static int SetupMCUHardware(struct inv_icm426xx_serif * icm_serif, struct inv_ak
 	INV_MSG(INV_MSG_LEVEL_INFO, "###################");
 	
 	/*
-	 * Configure input capture mode GPIO connected to pin PB10 (arduino connector D6).
+	 * Configure input capture mode GPIO connected to pin set in INV_GPIO_INT1.
 	 * This pin is connected to Icm426xx INT1 output and thus will receive interrupts 
 	 * enabled on INT1 from the device.
 	 * A callback function is also passed that will be executed each time an interrupt
 	 * fires.
 	*/
-	inv_gpio_sensor_irq_init(INV_GPIO_INT1, ext_interrupt_inv_cb, 0);
-	
-	/* Init timer peripheral for delay */
-	rc |= inv_delay_init(DELAY_TIMER);
+	//Setup INT1 gpio
+	//interrupt of rising edge
+	gpio_config_t io_conf;
+    io_conf.intr_type = GPIO_INTR_NEGEDGE;
+    //bit mask of the pins, for INV_GPIO_INT1
+    io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
+    //set as input mode
+    io_conf.mode = GPIO_MODE_INPUT;
+    //enable pull-up mode
+    io_conf.pull_up_en = 1;
+    gpio_config(&io_conf);
 
+	//installing ISR services
+	gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+    //hook isr handler for specific gpio pin
+    gpio_isr_handler_add(INV_GPIO_INT1, ext_interrupt_inv_cb, INV_GPIO_INT1);
+
+#if 0
 #if USE_CLK_IN
 	/* Use CLKIN */
 	rtc_timer_init(NULL);
@@ -368,16 +519,22 @@ static int SetupMCUHardware(struct inv_icm426xx_serif * icm_serif, struct inv_ak
 	rc |= inv_timer_configure_timebase(1000000);
 	inv_timer_enable(TIMEBASE_TIMER);
 #endif
+#endif //if0
 
 	/* Initialize serial inteface between MCU and Icm426xx */
 	icm_serif->context   = 0;        /* no need */
-	icm_serif->read_reg  = inv_io_hal_read_reg;
-	icm_serif->write_reg = inv_io_hal_write_reg;
+	icm_serif->read_reg  = ESP32_HAL_read_reg;
+	icm_serif->write_reg = ESP32_HAL_write_reg;
 	icm_serif->max_read  = 1024*32;  /* maximum number of bytes allowed per serial read */
 	icm_serif->max_write = 1024*32;  /* maximum number of bytes allowed per serial write */
 	icm_serif->serif_type = SERIF_TYPE;
-	rc |= inv_io_hal_init(icm_serif);
-	
+	rc |= ESP32_icm_serif_init(icm_serif);
+
+
+/*
+*	MAG stuff is not done, and not tested due to lack of hardware.
+*
+*/
 #if USE_MAG
 	/* Configure timer used to periodically start mag acquisition */
 	if (TIMEBASE_TIMER != MAG_SAMPLING_TIMER) {
@@ -406,17 +563,13 @@ static int SetupMCUHardware(struct inv_icm426xx_serif * icm_serif, struct inv_ak
  * Note that this function is executed in an interrupt handler and thus no protection
  * is implemented for shared variable timestamp_buffer.
  */
-void ext_interrupt_inv_cb(void * context, unsigned int_num)
+void ext_interrupt_inv_cb(void * context)
 {
 	(void)context;
 
-#if USE_CLK_IN
 	/* Read timestamp from the RTC derived from SLCK since CLKIN is used */
-	uint64_t timestamp = rtc_timer_get_time_us();
-#else /* ICM42686 */
-	/* Read timestamp from the timer */
-	uint64_t timestamp = inv_timer_get_counter(TIMEBASE_TIMER);
-#endif
+	uint64_t timestamp = ESP32_get_time_us();
+    uint32_t int_num = (uint32_t) arg;
 
 	if (int_num == INV_GPIO_INT1) {
 		if (!RINGBUFFER_VOLATILE_FULL(&timestamp_buffer_icm))
@@ -426,6 +579,7 @@ void ext_interrupt_inv_cb(void * context, unsigned int_num)
 	irq_from_device |= TO_MASK(int_num);
 }
 
+
 #if USE_MAG
 /*
  * Interrupt handler of the timer used to trigger new magnetometer data acquisition.
@@ -434,6 +588,7 @@ static void interrupt_timer_start_mag_cb(void *context)
 {
 	(void)context;
 
+#if 0
 #if USE_CLK_IN
 	/* Read timestamp from the RTC derived from SLCK since CLKIN is used */
 	uint64_t timestamp = rtc_timer_get_time_us();
@@ -441,6 +596,8 @@ static void interrupt_timer_start_mag_cb(void *context)
 	/* Read timestamp from the timer */
 	uint64_t timestamp = inv_timer_get_counter(TIMEBASE_TIMER);
 #endif
+#endif //#if 0
+	uint64_t timestamp = ESP32_get_time_us();
 
 	if (!RINGBUFFER_VOLATILE_FULL(&timestamp_buffer_mag))
 		RINGBUFFER_VOLATILE_PUSH(&timestamp_buffer_mag, &timestamp);
@@ -466,17 +623,22 @@ static void interrupt_timer_data_rdy_mag_cb(void *context)
 /* Get char command on the UART */
 static char get_user_command_from_uart(void)
 {
-	char rchar, cmd = 0;
+	char cmd = 0;
 	if (irq_event_main_uart) {
-		inv_disable_irq();
-		// irq_event_main_uart = 0;
-		inv_enable_irq();
-		
-		while(inv_uart_mngr_available(LOG_UART_ID)) {
-			rchar = inv_uart_mngr_getc(LOG_UART_ID);
-			if (rchar != '\n')
-				cmd = rchar;
+		//portENTER_CRITICAL(&mux);
+		irq_event_main_uart = 0;
+		//portEXIT_CRITICAL(&mux);
+		xSemaphoreTake(sCmdSem, portMAX_DELAY);
+		int i = 0;
+		while(i < uart_bufs) {
+			cmd = uart_cmd_buf[i];
+			if (cmd != '\n') {
+				break;
+			} else {
+				i++;
+			}
 		}
+		xSemaphoreGive(sCmdSem);
 	}
 	return cmd;
 }
@@ -488,7 +650,13 @@ void check_rc(int rc, const char * msg_context)
 {
 	if (rc < 0) {
 		INV_MSG(INV_MSG_LEVEL_ERROR, "%s: error %d (%s)\r\n", msg_context, rc, inv_error_str(rc));
-		while(1);
+		/*LOL... we are FreeRTOS, so this would not do much,
+		maybe just startle the task watchdog. */
+		// while(1);
+		abort(0); //... because when there is error, panic! why not?
+		// I'm pointing at you FreeRTOS ASSERT!!!! ,,|,,
+		//Anyway, are you up to reading some tasty core dumps? Me neither!
+		//At least you can find this abort call from the backtrace, and realize, it has been nothing :)
 	}
 }
 
@@ -497,27 +665,18 @@ void check_rc(int rc, const char * msg_context)
  */
 void msg_printer(int level, const char * str, va_list ap)
 {
-	static char out_str[256]; /* static to limit stack usage */
-	unsigned idx = 0;
-	const char * s[INV_MSG_LEVEL_MAX] = {
-		"",    // INV_MSG_LEVEL_OFF
-		"[E] ", // INV_MSG_LEVEL_ERROR
-		"[W] ", // INV_MSG_LEVEL_WARNING
-		"[I] ", // INV_MSG_LEVEL_INFO
-		"[V] ", // INV_MSG_LEVEL_VERBOSE
-		"[D] ", // INV_MSG_LEVEL_DEBUG
-	};
-	idx += snprintf(&out_str[idx], sizeof(out_str) - idx, "%s", s[level]);
-	if (idx >= (sizeof(out_str)))
+	va_list args;
+	va_start(args, format);
+	size_t msglen = vsnprintf(NULL, NULL, format, args);
+	char *msg = malloc(msglen+1);
+	if (!msg)
+	{
 		return;
-	idx += vsnprintf(&out_str[idx], sizeof(out_str) - idx, str, ap);
-	if (idx >= (sizeof(out_str)))
-		return;
-	idx += snprintf(&out_str[idx], sizeof(out_str) - idx, "\r\n");
-	if (idx >= (sizeof(out_str)))
-		return;
-
-	inv_uart_mngr_puts(LOG_UART_ID, out_str, idx);
+	}
+	//ESP_LOGW("DEB: ", "Taglen: %d", strlen(msg));
+	vsnprintf(msg, msglen+1, format, args);
+	va_end(args);
+	ESP_LOG_LEVEL(level, TAG, "%s%s\r", INV_LOGLEVEL[level], msg);
 }
 
 
@@ -530,11 +689,14 @@ void msg_printer(int level, const char * str, va_list ap)
  */
 uint64_t inv_icm426xx_get_time_us(void)
 {
+#if 0	//original code
 #if USE_CLK_IN
 	return rtc_timer_get_time_us();
 #else
 	return inv_timer_get_counter(TIMEBASE_TIMER);
 #endif
+#endif //#if 0
+	return ESP32_get_time_us();
 }
 
 /*
@@ -544,7 +706,7 @@ uint64_t inv_icm426xx_get_time_us(void)
  */
 void inv_helper_disable_irq(void)
 {
-	inv_disable_irq();
+	portENTER_CRITICAL(&mux);
 }
 
 /*
@@ -554,7 +716,7 @@ void inv_helper_disable_irq(void)
  */
 void inv_helper_enable_irq(void)
 {
-	inv_enable_irq();
+	portEXIT_CRITICAL(&mux);
 }
 
 /*

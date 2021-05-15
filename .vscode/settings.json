@@ -1,4 +1,8 @@
 {
     "C_Cpp.dimInactiveRegions": false,
-    "C_Cpp.errorSquiggles": "Disabled"
+    "C_Cpp.errorSquiggles": "Disabled",
+    "idf.toolsPath": "C:\\Users\\Bujtor.Bence\\.espressif\\tools",
+    "idf.toolsPathWin": "C:\\Users\\Bujtor.Bence\\.espressif\\tools",
+    "idf.pythonBinPathWin": "${env:IDF_PYTHON_ENV_PATH}",
+    "idf.pythonBinPath": "${env:IDF_PYTHON_ENV_PATH}"
 }

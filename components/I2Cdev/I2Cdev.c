@@ -1,6 +1,11 @@
+#include <stdint.h>
+#include <stdbool.h>
+
 #include "driver/i2c.h"
 #include "I2Cdev.h"
+#include "sdkconfig.h"
 
+bool inited;	//checker to see if I2Cdev_init() has been called before
 
 bool I2Cdev_writeByte(uint8_t devAdd, uint8_t regAddr, uint8_t data) {
 	i2c_cmd_handle_t cmd;
@@ -29,13 +34,7 @@ void I2Cdev_SelectRegister(uint8_t dev, uint8_t reg){
 	i2c_cmd_link_delete(cmd);
 }
 
-
-
-
-
-
-
-bool I2Cdev_writeBytes(uint8_t devAdd, uint8_t regAddr, uint8_t length, uint8_t *data){
+bool I2Cdev_writeBytes(uint8_t devAdd, uint8_t regAddr, uint32_t length, uint8_t *data){
 	i2c_cmd_handle_t cmd;
 
 	cmd = i2c_cmd_link_create();
@@ -50,7 +49,7 @@ bool I2Cdev_writeBytes(uint8_t devAdd, uint8_t regAddr, uint8_t length, uint8_t 
 	return true;
 }
 
-uint8_t I2Cdev_readBytes(uint8_t devAdd, uint8_t regAddr, uint8_t length, uint8_t *data) {
+uint8_t I2Cdev_readBytes(uint8_t devAdd, uint8_t regAddr, uint32_t length, uint8_t *data) {
 	i2c_cmd_handle_t cmd;
 	I2Cdev_SelectRegister(devAdd, regAddr); //
 
@@ -70,14 +69,16 @@ uint8_t I2Cdev_readBytes(uint8_t devAdd, uint8_t regAddr, uint8_t length, uint8_
 	return length;
 }
 
-uint8_t I2Cdev_readByte(uint8_t devAdd, uint8_t regAddr, uint8_t *data) {
-    return I2Cdev_readBytes(devAdd, regAddr, 1, data);
+uint8_t I2Cdev_readByte(uint8_t devAdd, uint8_t regAddr) {
+	uint8_t data;
+    I2Cdev_readBytes(devAdd, regAddr, 1, &data);
+	return data;
 }
 
-uint8_t I2Cdev_readBits(uint8_t devAdd, uint8_t regAddr, uint8_t bitStart, uint8_t length, uint8_t *data) {
+uint8_t I2Cdev_readBits(uint8_t devAdd, uint8_t regAddr, uint8_t bitStart, uint32_t length, uint8_t *data) {
 
     uint8_t count, b;
-    if ((count = I2Cdev_readByte(devAdd, regAddr, &b)) != 0) {
+    if ((count = I2Cdev_readBytes(devAdd, regAddr, 1, &b)) != 0) {
         uint8_t mask = ((1 << length) - 1) << (bitStart - length + 1);
         b &= mask;
         b >>= (bitStart - length + 1);
@@ -86,9 +87,9 @@ uint8_t I2Cdev_readBits(uint8_t devAdd, uint8_t regAddr, uint8_t bitStart, uint8
     return count;
 }
 
-bool I2Cdev_writeBits(uint8_t devAdd, uint8_t regAddr, uint8_t bitStart, uint8_t length, uint8_t data) {
+bool I2Cdev_writeBits(uint8_t devAdd, uint8_t regAddr, uint8_t bitStart, uint32_t length, uint8_t data) {
 	uint8_t b = 0;
-    if (I2Cdev_readByte(devAdd, regAddr, &b) != 0) {
+    if (I2Cdev_readBytes(devAdd, regAddr, 1, &b) != 0) {
         uint8_t mask = ((1 << length) - 1) << (bitStart - length + 1);
         data <<= (bitStart - length + 1); // shift data into correct position
         data &= mask; // zero all non-important bits in data
@@ -102,14 +103,10 @@ bool I2Cdev_writeBits(uint8_t devAdd, uint8_t regAddr, uint8_t bitStart, uint8_t
 
 bool I2Cdev_writeBit(uint8_t devAdd, uint8_t regAddr, uint8_t bitNum, uint8_t data) {
     uint8_t b;
-    I2Cdev_readByte(devAdd, regAddr, &b);
+    I2Cdev_readBytes(devAdd, regAddr, 1, &b);
     b = (data != 0) ? (b | (1 << bitNum)) : (b & ~(1 << bitNum));
     return I2Cdev_writeByte(devAdd, regAddr, b);
 }
-
-
-
-
 
 uint8_t I2Cdev_readWord(uint8_t devAdd, uint8_t regAddr, uint16_t *data){
 	uint8_t msb[2] = {0,0};
@@ -121,27 +118,62 @@ uint8_t I2Cdev_readWord(uint8_t devAdd, uint8_t regAddr, uint16_t *data){
 bool I2Cdev_writeWord(uint8_t devAddr, uint8_t regAddr, uint16_t data){
 
 	uint8_t data1[] = {(uint8_t)(data>>8), (uint8_t)(data & 0xff)};
-	uint8_t data2[] = {(uint8_t)(data & 0xff), (uint8_t)(data>>8)};
+	//uint8_t data2[] = {(uint8_t)(data & 0xff), (uint8_t)(data>>8)};
 	I2Cdev_writeBytes(devAddr, regAddr, 2, data1);
 	return true;
 }
 
-
-void I2Cdev_init()
+esp_err_t I2Cdev_init(int gpio_pin_sda, int gpio_pin_scl)
 {
-	i2c_config_t conf;
-	conf.mode = I2C_MODE_MASTER;
-	conf.sda_io_num = (gpio_num_t)PIN_SDA;
-	conf.scl_io_num = (gpio_num_t)PIN_CLK;
-	conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-	conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-	conf.master.clk_speed = 400000;
-	ESP_ERROR_CHECK(i2c_param_config(I2C_NUM_0, &conf));
-	ESP_ERROR_CHECK(i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0));
+	if (!inited)
+	{
+		i2c_config_t conf;
+		conf.mode = I2C_MODE_MASTER;
+		if (gpio_pin_sda < 0)
+		{
+			conf.sda_io_num = (gpio_num_t)CONFIG_I2CDEV_SDA_DEF_GPIO;
+		}
+		else
+		{
+			conf.sda_io_num = (gpio_num_t)gpio_pin_sda;
+		}
+		if (gpio_pin_scl < 0)
+		{
+			conf.scl_io_num = (gpio_num_t)CONFIG_I2CDEV_SCL_DEF_GPIO;
+		}
+		else
+		{
+			conf.sda_io_num = gpio_pin_scl;
+		}
+#ifdef CONFIG_I2CDEV_SDA_PULLUP_EN
+		conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
+#else
+		conf.sda_pullup_en = GPIO_PULLUP_DISABLE;
+#endif //#ifdef CONFIG_I2CDEV_SDA_PULLUP_EN
+#ifdef CONFIG_I2CDEV_SCL_PULLUP_EN
+		conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+#else
+		conf.scl_pullup_en = GPIO_PULLUP_DISABLE;
+#endif //#ifdef CONFIG_I2CDEV_SCL_PULLUP_EN
+		conf.master.clk_speed = CONFIG_I2CDEV_DEF_SCL_FREQ;
+		esp_err_t rc = ESP_OK;
+		if ((rc = i2c_param_config(I2C_NUM_0, &conf)) != ESP_OK)
+		{
+			return rc;
+		}
+		else
+		{
+			if ((rc = i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0)) != ESP_OK)
+			{
+				return rc;
+			}
+			else
+			{
+				inited = true;
+				return ESP_OK;
+			}
+		}
+		return rc;
+	}
+	return ESP_OK;
 }
-
-
-
-
-
-

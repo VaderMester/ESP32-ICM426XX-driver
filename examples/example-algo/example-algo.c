@@ -2,7 +2,7 @@
  * ________________________________________________________________________________________________________
  * Copyright (c) 2017 InvenSense Inc. All rights reserved.
  *
- * This software, related documentation and any modifications thereto (collectively “Software”) is subject
+ * This software, related documentation and any modifications thereto (collectively ï¿½Softwareï¿½) is subject
  * to InvenSense and its licensors' intellectual property rights under U.S. and international copyright
  * and other intellectual property rights laws.
  *
@@ -25,8 +25,16 @@
 
 #include "Invn/EmbUtils/Message.h"
 #include "Invn/EmbUtils/RingBuffer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/ringbuf.h"
+#include "freertos/queue.h"
+#include "nvs_flash.h"
 
-#include "system-interface.h"
+#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
+#include "ICM426XX.h"
+
+#include "esp_log.h"
 
 /* board drivers */
 #include "common.h"
@@ -36,6 +44,8 @@
 #include <math.h>
 
 #define RAD_TO_DEG(rad) ((float)rad * 57.2957795131)
+
+#define TIMESTAMP_SIZE (sizeof(uint64_t))
 
 /* --------------------------------------------------------------------------------------
  *  Static and extern variables
@@ -49,6 +59,7 @@ static clk_calib_t clk_calib;
 
 /* Buffer to keep track of the timestamp when icm426xx data ready interrupt fires. */
 extern RINGBUFFER_VOLATILE(timestamp_buffer_icm, 64, uint64_t);
+//static RingbufHandle_t timestamp_buffer_icm = NULL;
 
 /*
  * ICM mounting matrix
@@ -97,10 +108,7 @@ static int32_t mag_mounting_matrix[9] = {  0,         (1<<30),     0,
 /* Variable to keep track if the mag has initialized successfully */
 extern int mag_init_successful;
 
-#endif
-
-static InvnAlgoAGMInput input;
-static InvnAlgoAGMOutput output;
+#endif //#if USE_MAG
 
 /* Counter to keep track of number of sample received */
 static int iter_algo = 0;
@@ -176,15 +184,15 @@ int SetupInvDevice(struct inv_icm426xx_serif * icm_serif)
 	}
 	
 	RINGBUFFER_VOLATILE_CLEAR(&timestamp_buffer_icm);
+	//timestamp_buffer_icm = xRingbufferCreateNoSplit(TIMESTAMP_SIZE, 64);
 	return rc;
 }
-
 
 int ConfigureInvDevice(void)
 {
 	int rc = 0;
 
-	rc |= inv_flash_manager_init();
+	//rc |= inv_flash_manager_init();
 	
 #if USE_CLK_IN
 	#if defined(ICM42633) 
@@ -324,7 +332,7 @@ int InitInvAGMAlgo(void)
 	config.mag_accuracy = mag_accuracy;
 
 	/* Initialize algorithm */
-	rc |= invn_algo_agm_init(&config);
+	INV_MSG(INV_MSG_LEVEL_INFO, "FUCK YOU ALGO LIB");
 
 	return rc;
 }
@@ -352,10 +360,10 @@ void HandleInvDeviceFifoPacket(inv_icm426xx_sensor_event_t * event)
 	 * As timestamp buffer is filled in interrupt handler, we should pop it with
 	 * interrupts disabled to avoid any concurrent access.
 	 */
-	inv_disable_irq();
+	portENTER_CRITICAL(&mux);	//Critical section enter
 	if (!RINGBUFFER_VOLATILE_EMPTY(&timestamp_buffer_icm))
 		RINGBUFFER_VOLATILE_POP(&timestamp_buffer_icm, &irq_timestamp);
-	inv_enable_irq();
+	portEXIT_CRITICAL(&mux);	//Critical exit
 
 	/*
 	 * Extend the 16-bit timestamp from the FIFO to get an accurate timestamping
@@ -400,7 +408,7 @@ void HandleInvDeviceFifoPacket(inv_icm426xx_sensor_event_t * event)
 	input.sRimu_time_us = extended_timestamp;
 
 	/* Process the AgmFusion Algo */
-	invn_algo_agm_process(&input, &output);
+	//invn_algo_agm_process(&input, &output);
 	
 	store_biases();
 
@@ -468,10 +476,10 @@ int GetDataFromMagDevice()
 	int16_t raw_mag[3];
 	uint64_t irq_timestamp = 0;
 
-	inv_disable_irq();
+	portENTER_CRITICAL(&mux);
 	if (!RINGBUFFER_VOLATILE_EMPTY(&timestamp_buffer_mag))
 		RINGBUFFER_VOLATILE_POP(&timestamp_buffer_mag, &irq_timestamp);
-	inv_enable_irq();
+	portEXIT_CRITICAL(&mux);
 
 	/* Read Ak09915 data */
 	rc |= inv_ak0991x_poll_data(&ak_driver, raw_mag);
@@ -640,25 +648,8 @@ static void print_algo_inputs_outputs(void)
  * \return 0 on success, -1 if no bias are in NV, an error otherwise
  */
 static int retrieve_stored_biases_from_flash(int32_t acc_bias_q16[3], int32_t gyr_bias_q16[3], int32_t mag_bias_q16[3])
-{
-	uint8_t sensor_bias[84];
-	uint8_t idx = 0;
-	int rc;
-	
-	/* Retrieve bias stored in NV memory */
-	if ((rc = inv_flash_manager_readData(sensor_bias)) != 0) {
-		return -1;
-	}
-	
-	memcpy(acc_bias_q16, &sensor_bias[idx], sizeof(acc_bias_q16[0]) * 3);
-	idx += sizeof(acc_bias_q16[0]) * 3;
-	
-	memcpy(gyr_bias_q16, &sensor_bias[idx], sizeof(gyr_bias_q16[0]) * 3);
-	idx += sizeof(gyr_bias_q16[0]) * 3;
-	
-	memcpy(mag_bias_q16, &sensor_bias[idx], sizeof(mag_bias_q16[0]) * 3);
-		
-	return rc;
+{	
+	return ESP32_retrieve_stored_biases_from_flash(acc_bias_q16, gyr_bias_q16, mag_bias_q16);
 }
 
 /*
@@ -669,18 +660,7 @@ static int retrieve_stored_biases_from_flash(int32_t acc_bias_q16[3], int32_t gy
  */
 static void store_biases_in_flash(const int32_t acc_bias_q16[3], const int32_t gyr_bias_q16[3], const int32_t mag_bias_q16[3])
 {
-	uint8_t sensors_biases[84] = {0};
-	uint8_t idx = 0;
-	
-	memcpy(&sensors_biases[idx], acc_bias_q16, sizeof(acc_bias_q16[0]) * 3);
-	idx += sizeof(acc_bias_q16[0]) * 3;
-	
-	memcpy(&sensors_biases[idx], gyr_bias_q16, sizeof(gyr_bias_q16[0]) * 3);
-	idx += sizeof(gyr_bias_q16[0]) * 3;
-	
-	memcpy(&sensors_biases[idx], mag_bias_q16, sizeof(mag_bias_q16[0]) * 3);
-	
-	inv_flash_manager_writeData(sensors_biases);
+	return ESP32_store_biases_in_flash(acc_bias_q16, gyr_bias_q16, mag_bias_q16);
 }
 
 /*

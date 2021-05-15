@@ -1,0 +1,94 @@
+menu "ICM426XX Driver configuration"
+
+    choice
+        prompt "Seral Interface"
+        default ICM426XX_USE_I2C 
+        help
+            Chosen serial interface for communicating with an ICM426XX.
+            By default I2C is used, using the I2CDev component.
+            Choosing I2CDev, check it's configuration to select the correct configuration
+        # these work:
+
+        config ICM426XX_USE_I2C
+            bool "Use I2C via I2CDev"
+
+        config ICM426XX_USE_SPI4
+            bool "Use SPI 4-wire mode (To-Be-Implemented)"
+
+    endchoice
+
+    config ICM426XX_LOCAL_LOG_LEVEL
+        int "Local logging level of component"
+        default 1
+        range 0 5
+        help
+            Logging verbosity level of component
+            0 - No ouput
+            1 - error (lowest)
+            2 - warning
+            3 - info
+            4 - debug
+            5 - verbose (highest)
+
+    config ICM426XX_DEV_NAME
+        int "ICM device type, all 5 digits"
+        default 42605
+        range 42600 42688
+        help
+            ICM device type, all 5 digits of the ICM426XX device.
+            For example if ICM42605 is used this should be equal to 42605
+
+    config ICM426XX_DEV_ADDRESS
+        hex "I2C Only - BUS Address of device"
+        default 0x68
+        range 0x0 0x256
+        help
+            Address of the device in I2C mode
+
+    config ICM426XX_DEV_INT1_GPIO
+        int "INT1 GPIO on ESP32"
+        default 1
+        range 0 47
+        help
+            GPIO pin number for INT1 signal
+            0-47: Valid GPIO
+            -1: Not used
+
+    config ICM426XX_DEV_INT2_GPIO
+        int "INT2 GPIO on ESP32"
+        default 2
+        range 0 47
+        help
+            GPIO pin number for INT2 signal
+            0-47: Valid GPIO
+            -1: Not used
+
+    config ICM426XX_TASK_NAME
+        string "String name of the driver task, to be used in vTaskList and diagnostics"
+        default "ICM_task"
+        help
+            Name string of driver task.
+
+    config ICM426XX_TASK_CORE_AFFINITY
+        int "Which core should we run the ICM426XX driver"
+        default 0
+        range 0 1
+        help
+            Core number for the driver task
+            0 or 1. For single core devices, this is not used
+
+    config ICM426XX_TASK_STACK_SIZE
+        int "Driver task stack size"
+        default 2000
+        range 1000 10000
+        help
+            Task stack size in bytes, used when calling xTaskCreate
+            recomended 1000 or more
+
+    config ICM426XX_TASK_PRIORITY
+        int "FreeRTOS task priority of driver task"
+        default 8
+        range 1 10
+        help
+            Task priority of the driver. Up to you!
+endmenu

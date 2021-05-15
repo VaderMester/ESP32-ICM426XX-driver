@@ -3,9 +3,11 @@
         {
             "name": "Win32",
             "includePath": [
-                "${workspaceFolder}/**",
-                "C:/ESP/IDF/components/**",
-                "C:/ESP/IDF/components/freertos/include"
+                "${workspaceFolder}/build/config/**",
+                "${workspaceFolder}/components/**",
+                "${workspaceFolder}/main/**",
+                "${env:IDF_PATH}/components/**",
+                "C:/Users/Bujtor.Bence/esp/esp-idf/components/**"
             ],
             "defines": [
                 "_DEBUG",
