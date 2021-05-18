@@ -3,6 +3,6 @@
     "C_Cpp.errorSquiggles": "Disabled",
     "idf.toolsPath": "C:\\Users\\Bujtor.Bence\\.espressif\\tools",
     "idf.toolsPathWin": "C:\\Users\\Bujtor.Bence\\.espressif\\tools",
-    "idf.pythonBinPathWin": "${env:IDF_PYTHON_ENV_PATH}",
-    "idf.pythonBinPath": "${env:IDF_PYTHON_ENV_PATH}"
+    "idf.pythonBinPathWin": "C:\\Users\\Bujtor.Bence\\.espressif\\python_env\\idf4.4_py3.7_env\\Scripts\\python.exe",
+    "idf.pythonBinPath": "C:\\Users\\Bujtor.Bence\\.espressif\\python_env\\idf4.4_py3.7_env\\Scripts\\python.exe"
 }

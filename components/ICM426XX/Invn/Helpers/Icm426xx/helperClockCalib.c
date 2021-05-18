@@ -231,19 +231,19 @@ static float compute_calibration_coefficient(struct inv_icm426xx * s, uint32_t d
 	float tICM_1f, tICM_2f;
 
 	/* Get the MCU and ICM time */
-	portENTER_CRITICAL(&mux);;
+	//portENTER_CRITICAL(&mux);;
 	tMCU_1 = inv_icm426xx_get_time_us();
 	inv_icm426xx_get_current_timestamp(s, &tICM_1);
-	portEXIT_CRITICAL(&mux);;
+	//portEXIT_CRITICAL(&mux);;
 
 	/* Wait 200ms */
 	inv_icm426xx_sleep_us(duration_us);
 
 	/* Get the MCU and ICM time once again */
-	portENTER_CRITICAL(&mux);;
+	//portENTER_CRITICAL(&mux);;
 	tMCU_2 = inv_icm426xx_get_time_us();
 	inv_icm426xx_get_current_timestamp(s, &tICM_2);
-	portEXIT_CRITICAL(&mux);;
+	//portEXIT_CRITICAL(&mux);;
 	
 	tICM_2f = (float)tICM_2 * get_reg_timestamp_resolution(s);
 	tICM_1f = (float)tICM_1 * get_reg_timestamp_resolution(s);

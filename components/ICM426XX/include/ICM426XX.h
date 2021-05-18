@@ -36,12 +36,13 @@
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
 
+//#include "logmacro.h"
+
 /*
  * --------------------------------------------------------------------------------------
  *  ICM426XX Driver configurations
  * --------------------------------------------------------------------------------------
  */
-#define ICM426XX_BUS_ADDR CONFIG_ICM426XX_DEV_ADDRESS
 /* 
  * Select communication link between SmartMotion and ICM426xx 
  */
@@ -102,6 +103,11 @@
  */
 #define MSG_LEVEL INV_MSG_LEVEL_INFO
 
+StaticQueue_t xQbuf;
+QueueHandle_t xICMeventQ;
+uint8_t *qStore;
+SemaphoreHandle_t irqSem;
+
 
 typedef struct agData {
   int32_t acc[3];
@@ -110,11 +116,6 @@ typedef struct agData {
 } agData_t;
 
 agData_t *agDataBuf;
-
-StaticQueue_t xQbuf;
-QueueHandle_t xICMeventQ;
-uint8_t *qStore;
-SemaphoreHandle_t irqSem;
 
 //global value of init status. Used by components's NVS functions, and initialized as ESP_FAIL;
 esp_err_t icm_nvs_inited;

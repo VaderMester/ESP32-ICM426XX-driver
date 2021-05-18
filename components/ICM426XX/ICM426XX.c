@@ -12,22 +12,27 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <math.h>
-#include "sdkconfig.h"
-
 #include "nvs_flash.h"
 
 //#include "Message.h"
+
+#define ICM426XX_NVS_NAME "ICM426XXNVS"
+#define ICM426XX_NVS_KEY "biases"
 
 #include "ICM426XX.h"
 #include "time.h"
 #include <sys/time.h>
 #include "esp_system.h"
 #include "esp_sntp.h"
+#include "esp_log.h"
 
-#define LOGNAME "ICM426XX"
-#define ICM426XX_NVS_NAME "ICM426XXNVS"
-#define ICM426XX_NVS_KEY "biases"
+/* Helper macros to help better error checking */
+#define ERR_RET(val) do {if(val) {return val;}}while(0)
+#define ERR_LOG_FUNC(val) if(val) {ESP_LOGE(LOGNAME, "Error in %s: %d", __func__, val)}
+#define ERR_LOG_FUNC_RET(val) do {if(val) {ESP_LOGE(LOGNAME, "Error in %s: %d", __func__, val); return val;}}while(0)
 
+#define ERR_LOG_MSG_RET(val, fmt, ...) do {if(val != ESP_OK) {ESP_LOGE(LOGNAME, fmt, ## __VA_ARGS__); return val;}}while(0)
+/*
 #if CONFIG_ICM426XX_LOCAL_LOG_LEVEL == 0
 #define LOG_LOCAL_LEVEL ESP_LOG_NONE
 #elif CONFIG_ICM426XX_LOCAL_LOG_LEVEL == 1
@@ -41,12 +46,13 @@
 #elif CONFIG_ICM426XX_LOCAL_LOG_LEVEL == 5
 #define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
 #endif
-
-#include "logmacro.h"
+*/
 
 #define RAD_TO_DEG(rad) ((float)rad * 57.2957795131)
 
 #define ESP_INTR_FLAG_DEFAULT 0
+
+#define ICM426XX_BUS_ADDR CONFIG_ICM426XX_DEV_ADDRESS
 
 /* Full Scale Range */
 #if 0
@@ -90,6 +96,7 @@ RINGBUFFER(timestamp_buffer, 64, uint64_t);
 
 /* MUX for entering critical section */
 static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+
 
 const uint8_t qSize = 10;
 
@@ -174,7 +181,7 @@ int ESP32_HAL_read_reg(struct inv_icm426xx_serif *serif, uint8_t reg, uint8_t *b
 		//TODO: Add SPI later
 		return 1;
 	case ICM426XX_UI_I2C:
-		if (I2Cdev_readBytes(ICM426XX_BUS_ADDR, reg, len, buf))
+		if (I2Cdev_readBytes((uint8_t)ICM426XX_BUS_ADDR, reg, len, buf))
 		{
 			return 0;
 		}
@@ -205,10 +212,7 @@ int ESP32_HAL_write_reg(struct inv_icm426xx_serif *serif, uint8_t reg, uint8_t *
 		//TODO: Add SPI later
 		return -1;
 	case ICM426XX_UI_I2C:
-		if (I2Cdev_writeBytes(ICM426XX_BUS_ADDR, reg, len, buf))
-		{
-			return 0;
-		}
+		return I2Cdev_writeBytes((uint8_t)ICM426XX_BUS_ADDR, reg, len, buf);
 	default:
 		return -1;
 	}
@@ -235,6 +239,7 @@ int ESP32_icm_serif_init(struct inv_icm426xx_serif *serif)
 		}
 		else
 		{
+			ESP_LOGI(LOGNAME, "I2C driver initialized!");
 			return 0;
 		}
 	default:
@@ -382,7 +387,7 @@ esp_err_t ICM426XX_install_Int1_isr(gpio_isr_t int1_isr_handler, inv_icm426xx_in
 		io_conf.intr_type = GPIO_INTR_NEGEDGE;
 	}
     //bit mask of the pins, for INV_GPIO_INT1
-    io_conf.pin_bit_mask = CONFIG_ICM426XX_DEV_INT1_GPIO;
+    io_conf.pin_bit_mask = (1ULL << INV_GPIO_INT1);
     //set as input mode
     io_conf.mode = GPIO_MODE_INPUT;
     //enable pull-up mode
@@ -517,19 +522,24 @@ void ICM426XX_handleFifoPacket_cb(inv_icm426xx_sensor_event_t * event)
 	 */
 	
 	if(event->sensor_mask & (1 << INV_ICM426XX_SENSOR_ACCEL) && event->sensor_mask & (1 << INV_ICM426XX_SENSOR_GYRO))
-		INV_MSG(INV_MSG_LEVEL_INFO, "%u: %d, %d, %d, %d, %d, %d, %d", (uint32_t)extended_timestamp,
+	{
+		ESP_LOGI(LOGNAME, "%u: %d, %d, %d, %d, %d, %d, %d", (uint32_t)extended_timestamp,
 		        accel[0], accel[1], accel[2], 
 		        event->temperature,
 		        gyro[0], gyro[1], gyro[2]);
+	}
 	else if(event->sensor_mask & (1 << INV_ICM426XX_SENSOR_GYRO))
-		INV_MSG(INV_MSG_LEVEL_INFO, "%u: NA, NA, NA, %d, %d, %d, %d", (uint32_t)extended_timestamp,
+	{
+		ESP_LOGI(LOGNAME,  "%u: NA, NA, NA, %d, %d, %d, %d", (uint32_t)extended_timestamp,
 		        event->temperature,
 		        gyro[0], gyro[1], gyro[2]);
+	}
 	else if (event->sensor_mask & (1 << INV_ICM426XX_SENSOR_ACCEL))
-		INV_MSG(INV_MSG_LEVEL_INFO, "%u: %d, %d, %d, %d, NA, NA, NA", (uint32_t)extended_timestamp,
+	{
+		ESP_LOGI(LOGNAME,  "%u: %d, %d, %d, %d, NA, NA, NA", (uint32_t)extended_timestamp,
 		        accel[0], accel[1], accel[2],
 		        event->temperature);
-	
+	}
 	/* If Queue is full we remove discard the first (oldest) item */
 	if(uxQueueSpacesAvailable(xICMeventQ)) {
 		agData_t recv;
@@ -578,14 +588,13 @@ esp_err_t ICM426XX_dev_config_int1(inv_icm426xx_interrupt_parameter_t *intconf)
 
 esp_err_t ICM426XX_driver_init(struct inv_icm426xx_serif *icm_serif, inv_icm426xx_interrupt_parameter_t *intconf, void (*handleTask)(void *pvParams), TaskHandle_t *sICMtask, char *devName)
 {
-
+	ESP_LOGI(LOGNAME, "TEST");
 	esp_err_t rc = 0;
 	uint8_t who_am_i;
-	
-	INFO("##### Initing ICM426xx driver #####");
+	ESP_LOGI(LOGNAME, "##### Initing ICM426xx driver, at address 0x%.2x #####", ICM426XX_BUS_ADDR);
 	ERR_LOG_MSG_RET(inv_icm426xx_init(&icm_driver, icm_serif, ICM426XX_handleFifoPacket_cb), "!!! ERROR : failed to initialize Icm426xx.");
 	/* Check WHOAMI */
-	INFO("Check Icm426xx whoami value");
+	ESP_LOGI(LOGNAME, "Check Icm426xx whoami value");
 	ERR_LOG_MSG_RET(ICM426XX_whoami(&who_am_i), "!!! ERROR : failed to read Icm426xx whoami value.");
 
 	char name[9];
@@ -621,15 +630,15 @@ esp_err_t ICM426XX_driver_init(struct inv_icm426xx_serif *icm_serif, inv_icm426x
 		default:
 			sprintf(name, "unknown");
 	}
-	INFO("Found device: %s", name);
+	ESP_LOGI(LOGNAME, "Found device: %s", name);
 	if(who_am_i != ICM_WHOAMI) {
-		ERROR("!!! ERROR :  detected: %s, driver is configured for: ICM%d!!!", name, CONFIG_ICM426XX_DEV_NAME);
+		ESP_LOGE(LOGNAME, "!!! ERROR :  detected: %s, driver is configured for: ICM%d!!!", name, CONFIG_ICM426XX_DEV_NAME);
 		return ESP_FAIL;
 	}
 	snprintf(devName, strlen(name)+1, "%s", name);
 
 	RINGBUFFER_CLEAR(&timestamp_buffer);
-	return rc;
+
 	ICM426XX_Configure((uint8_t )IS_LOW_NOISE_MODE,
                             (uint8_t )IS_HIGH_RES_MODE,
                             ICM426XX_ACCEL_CONFIG0_FS_SEL_4g,
@@ -637,15 +646,21 @@ esp_err_t ICM426XX_driver_init(struct inv_icm426xx_serif *icm_serif, inv_icm426x
                             ICM426XX_ACCEL_CONFIG0_ODR_25_HZ,
                             ICM426XX_GYRO_CONFIG0_ODR_25_HZ,
                             (uint8_t )USE_CLK_IN);
-	//Place accelgyro data into IRAM, hopefully
 	qStore = heap_caps_malloc(sizeof(agData_t)*qSize, MALLOC_CAP_8BIT);
 	xICMeventQ = xQueueCreateStatic(qSize, sizeof(agData_t), qStore, &xQbuf);
 	irqSem = xSemaphoreCreateCounting(qSize, 0);
 	ERR_LOG_MSG_RET(inv_icm426xx_get_config_int1(&icm_driver, intconf), "Error reading interrupt configuration");
+	BaseType_t stat;
 	#ifdef CONFIG_FREERTOS_UNICORE
-	xTaskCreate(handleTask, CONFIG_ICM426XX_TASK_NAME, CONFIG_ICM426XX_TASK_STACK_SIZE, NULL, CONFIG_ICM426XX_TASK_PRIORITY, sICMtask);
+	stat = xTaskCreate(handleTask, CONFIG_ICM426XX_TASK_NAME, CONFIG_ICM426XX_TASK_STACK_SIZE, NULL, CONFIG_ICM426XX_TASK_PRIORITY, sICMtask);
 	#else
-	xTaskCreatePinnedToCore(handleTask, CONFIG_ICM426XX_TASK_NAME, CONFIG_ICM426XX_TASK_STACK_SIZE, NULL, CONFIG_ICM426XX_TASK_PRIORITY, sICMtask, CONFIG_ICM426XX_TASK_CORE_AFFINITY);
+	stat = xTaskCreatePinnedToCore(handleTask, CONFIG_ICM426XX_TASK_NAME, CONFIG_ICM426XX_TASK_STACK_SIZE, NULL, CONFIG_ICM426XX_TASK_PRIORITY, sICMtask, CONFIG_ICM426XX_TASK_CORE_AFFINITY);
 	#endif //#ifdef CONFIG_FREERTOS_UNICORE
-	vTaskSuspend(sICMtask);
+	if(stat == pdPASS) {
+
+	vTaskSuspend(*sICMtask);
+	ESP_LOGI(LOGNAME, "Task called '%s' created in suspended state!", CONFIG_ICM426XX_TASK_NAME);
+	return ESP_OK;
+	}
+	return ESP_FAIL;
 }

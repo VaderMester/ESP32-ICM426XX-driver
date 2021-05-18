@@ -32,7 +32,7 @@ menu "I2Cdev (I2C master mode driver) component config"
 
     config I2CDEV_DEF_SCL_FREQ
         int "Default master SCL frequency, in Hz"
-        default 400000
+        default 100000
         range 100000 1000000
         help
             Master SCL frequency of the I2C peripheral. Set when calling I2Cdev_init().
