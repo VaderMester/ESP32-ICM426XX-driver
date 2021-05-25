@@ -642,6 +642,8 @@ int inv_icm426xx_interface_change_procedure(struct inv_icm426xx * s, inv_icm426x
  */
 const char * inv_icm426xx_get_version(void);
 
+void inv_icm426xx_format_data(const uint8_t endian, const uint8_t *in, uint16_t *out);
+
 
 
 #ifdef __cplusplus

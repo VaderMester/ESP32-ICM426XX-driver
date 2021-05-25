@@ -37,7 +37,6 @@
 static int inv_icm426xx_configure_serial_interface(struct inv_icm426xx * s);
 static int inv_icm426xx_init_hardware_from_ui(struct inv_icm426xx * s, inv_icm426xx_interrupt_parameter_t *config_int);
 static int inv_icm426xx_is_wu_osc_active(struct inv_icm426xx * s);
-static void inv_icm426xx_format_data(const uint8_t endian, const uint8_t *in, uint16_t *out);
 
 int inv_icm426xx_set_reg_bank(struct inv_icm426xx * s, uint8_t bank)
 {
@@ -1590,15 +1589,18 @@ int inv_icm426xx_configure_fifo_wm(struct inv_icm426xx * s, uint16_t wm)
 
 	/* Disable FIFO WM */
 	if (config_int1.INV_ICM426XX_FIFO_THS == INV_ICM426XX_ENABLE) {
-		config_int1.INV_ICM426XX_FIFO_THS = INV_ICM426XX_DISABLE; 
+		config_int1.INV_ICM426XX_FIFO_THS = INV_ICM426XX_DISABLE;
+		config_int1.INV_ICM426XX_UI_DRDY = INV_ICM426XX_DISABLE;
 		status |= inv_icm426xx_set_config_int1(s, &config_int1);	
 	}
 	if (config_int2.INV_ICM426XX_FIFO_THS == INV_ICM426XX_ENABLE) {
-		config_int2.INV_ICM426XX_FIFO_THS = INV_ICM426XX_DISABLE; 
+		config_int2.INV_ICM426XX_FIFO_THS = INV_ICM426XX_DISABLE;
+		config_int2.INV_ICM426XX_UI_DRDY = INV_ICM426XX_DISABLE;
 		status |= inv_icm426xx_set_config_int2(s, &config_int2);	
 	}
 	if (config_ibi.INV_ICM426XX_FIFO_THS == INV_ICM426XX_ENABLE) {
-		config_ibi.INV_ICM426XX_FIFO_THS = INV_ICM426XX_DISABLE; 
+		config_ibi.INV_ICM426XX_FIFO_THS = INV_ICM426XX_DISABLE;
+		config_ibi.INV_ICM426XX_UI_DRDY = INV_ICM426XX_DISABLE;
 		status |= inv_icm426xx_set_config_ibi(s, &config_ibi);	
 	}
 	
@@ -2029,7 +2031,7 @@ static int inv_icm426xx_is_wu_osc_active(struct inv_icm426xx * s)
 }
 
 /* Default implementation converts ICM endian to little endian */
-static void inv_icm426xx_format_data(const uint8_t endian, const uint8_t *in, uint16_t *out)
+void inv_icm426xx_format_data(const uint8_t endian, const uint8_t *in, uint16_t *out)
 {
 	if(endian == ICM426XX_INTF_CONFIG0_DATA_BIG_ENDIAN)
 		*out = (in[0] << 8) | in[1];

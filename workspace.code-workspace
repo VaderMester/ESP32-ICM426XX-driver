@@ -105,7 +105,8 @@
 			"i2cdev.h": "c",
 			"icm426xxdriver_hl_apex.h": "c",
 			"esp_err.h": "c",
-			"logmacro.h": "c"
+			"logmacro.h": "c",
+			"ets_sys.h": "c"
 		},
 		"idf.pythonBinPathWin": "C:\\Users\\Bujtor.Bence\\.espressif\\python_env\\idf4.4_py3.7_env\\Scripts\\python.exe",
 		"idf.pythonBinPath": "C:\\Users\\Bujtor.Bence\\.espressif\\python_env\\idf4.4_py3.7_env\\Scripts\\python.exe",

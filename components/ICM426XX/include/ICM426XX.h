@@ -103,22 +103,70 @@
  */
 #define MSG_LEVEL INV_MSG_LEVEL_INFO
 
-StaticQueue_t xQbuf;
-QueueHandle_t xICMeventQ;
-uint8_t *qStore;
-SemaphoreHandle_t irqSem;
-
-
 typedef struct agData {
   int32_t acc[3];
   int32_t gyr[3];
   uint64_t timestamp;
 } agData_t;
 
-agData_t *agDataBuf;
+
+typedef struct icm426xx_fifo_conf {
+  uint8_t enable;
+  uint8_t read_partial_en;
+  uint8_t acc_en;
+  uint8_t gyr_en;
+  uint8_t temp_en;
+  uint8_t th_int_en;
+  uint8_t tmst_fsync_en;
+  uint8_t hires_en;
+  uint8_t mode;
+  ICM426XX_INTF_CONFIG0_FIFO_COUNT_REC_t rec_type;
+  uint16_t threshold_cnt;
+} icm426xx_fifo_conf_t;
+
+typedef enum {
+  INTR_ICM426XX_NONE = 0,
+	INTR_ICM426XX_UI_FSYNC = 1,
+  INTR_ICM426XX_PLL_RDY,
+  INTR_ICM426XX_RESET_DONE,
+	INTR_ICM426XX_UI_DRDY,
+	INTR_ICM426XX_FIFO_THS,
+	INTR_ICM426XX_FIFO_FULL,
+  INTR_ICM426XX_AGC_RDY,
+	INTR_ICM426XX_SMD,
+	INTR_ICM426XX_WOM_X,
+	INTR_ICM426XX_WOM_Y,
+	INTR_ICM426XX_WOM_Z,
+	INTR_ICM426XX_STEP_DET,
+	INTR_ICM426XX_STEP_CNT_OVFL,
+	INTR_ICM426XX_TILT_DET,
+#if defined(ICM_FAMILY_BPLUS) 
+	INTR_ICM426XX_SLEEP_DET,
+	INTR_ICM426XX_WAKE_DET,
+#elif defined(ICM_FAMILY_CPLUS)
+	INTR_ICM426XX_LOWG_DET,
+	INTR_ICM426XX_FF_DET,
+#endif
+    INTR_ICM426XX_TAP_DET
+  }ICM426XX_intr_status_t;
+
+#define ICM426XX_NUM_INTRS 14
+#if defined(ICM_FAMILY_BPLUS) 
+#define ICM426XX_NUM_INTRS 17
+#elif defined(ICM_FAMILY_CPLUS)
+#define ICM426XX_NUM_INTRS 17
+#endif
 
 //global value of init status. Used by components's NVS functions, and initialized as ESP_FAIL;
 esp_err_t icm_nvs_inited;
+
+StaticQueue_t xQbuf;
+QueueHandle_t xICMeventQ;
+uint8_t *qStore;
+SemaphoreHandle_t irqSem;
+agData_t *agDataBuf;
+
+
 /**
  * @brief This is to connect in ESP32 HW functions for reading registers from the ICM426XX device
  * @param serif:  We only use ICM426XX_SERIAL_IF_TYPE_t serif_type to brach for the properly
@@ -174,7 +222,14 @@ esp_err_t ESP32_retrieve_stored_biases_from_flash(int32_t acc_bias_q16[3], int32
 //Helper to get microsecond time
 uint64_t ESP32_get_time_us(void);
 
+/*
+ * --------------------------------------------------------------------------------------
+ *  ICM426XX SPECIFIC Functions 
+ * --------------------------------------------------------------------------------------
+ */
+
 esp_err_t ICM426XX_install_Int1_isr(gpio_isr_t int1_isr_handler, inv_icm426xx_interrupt_parameter_t *int_config);
+int ICM426XX_get_intr_events(ICM426XX_intr_status_t *statuses, int bufsize);
 
 esp_err_t ICM426XX_whoami(uint8_t *who_am_i);
 
@@ -190,8 +245,23 @@ void ICM426XX_handleFifoPacket_cb(inv_icm426xx_sensor_event_t * event);
 
 int ICM426XX_readFifo(void);
 
-esp_err_t ICM426XX_dev_config_int1(inv_icm426xx_interrupt_parameter_t *intconf);
+esp_err_t ICM426XX_configure_fifo(icm426xx_fifo_conf_t *fifocfg);
 
-esp_err_t ICM426XX_driver_init(struct inv_icm426xx_serif *icm_serif, inv_icm426xx_interrupt_parameter_t *intconf, void (*handleTask)(void *pvParams), TaskHandle_t *sICMtask, char *devName);
+/** @brief 	Prints to console the interrupt configuration of the device
+ *  @note	This function does not read it from the device
+ * 	@param 	intconf - interrupt configuration to be printed.
+ * 	@param	devType	- 5digit type number
+ * 	@param	loglevel - Log level of the function
+ */
+esp_err_t ICM426XX_print_dev_int1_config(uint32_t devType, esp_log_level_t level);
+
+esp_err_t ICM426XX_get_dev_int1_config(inv_icm426xx_interrupt_parameter_t *intconf);
+esp_err_t ICM426XX_set_dev_int1_config(inv_icm426xx_interrupt_parameter_t *intconf);
+
+esp_err_t ICM426XX_driver_init(struct inv_icm426xx_serif *icm_serif, char *devName);
+esp_err_t ICM426XX_create_driver_task(void (*handleTask)(void *pvParams), TaskHandle_t *sICMtask, int suspend);
+esp_err_t ICM426XX_use_fsync(int useFsync);
+
+esp_err_t ICM426XX_readreg(uint8_t reg, uint32_t len, uint8_t * buf);
 
 #endif //#ifndef __ICM426XX_H__
