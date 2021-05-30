@@ -17,12 +17,14 @@ menu "ICM426XX Driver configuration"
 
     endchoice
 
-    config ICM426XX_LOCAL_LOG_LEVEL
-        int "Local logging level of component"
+    config ICM426XX_DEBUG_LOG_LEVEL
+        int "Log level of error checking functions in component"
         default 1
         range 0 5
         help
-            Logging verbosity level of component
+            Log level of error checking functions in component
+            Actual log output is dependend on global project log settings
+            Setting to 0 will result in smaller binary size
             0 - No ouput
             1 - error (lowest)
             2 - warning
@@ -37,13 +39,6 @@ menu "ICM426XX Driver configuration"
         help
             ICM device type, all 5 digits of the ICM426XX device.
             For example if ICM42605 is used this should be equal to 42605
-
-    config ICM426XX_DEV_ADDRESS
-        hex "I2C Only - BUS Address of device"
-        default 0x68
-        range 0x0 0x256
-        help
-            Address of the device in I2C mode
 
     config ICM426XX_DEV_INT1_GPIO
         int "INT1 GPIO on ESP32"

@@ -157,6 +157,10 @@ typedef enum {
 #define ICM426XX_NUM_INTRS 17
 #endif
 
+
+#define ICM426XX_ADDR_AD0_LO 0x68
+#define ICM426XX_ADDR_AD0_HI 0x69
+
 //global value of init status. Used by components's NVS functions, and initialized as ESP_FAIL;
 esp_err_t icm_nvs_inited;
 
@@ -222,6 +226,9 @@ esp_err_t ESP32_retrieve_stored_biases_from_flash(int32_t acc_bias_q16[3], int32
 //Helper to get microsecond time
 uint64_t ESP32_get_time_us(void);
 
+
+esp_err_t ICM426XX_dumpBank0Regs(void);
+esp_err_t ICM426XX_dumpBank1Regs(void);
 /*
  * --------------------------------------------------------------------------------------
  *  ICM426XX SPECIFIC Functions 
@@ -233,7 +240,7 @@ int ICM426XX_get_intr_events(ICM426XX_intr_status_t *statuses, int bufsize);
 
 esp_err_t ICM426XX_whoami(uint8_t *who_am_i);
 
-int ICM426XX_Configure(uint8_t is_low_noise_mode,
+int ICM426XX_ConfigureUseFifo(uint8_t is_low_noise_mode,
                        uint8_t is_high_res_mode,
                        ICM426XX_ACCEL_CONFIG0_FS_SEL_t acc_fsr_g,
                        ICM426XX_GYRO_CONFIG0_FS_SEL_t gyr_fsr_dps,
@@ -243,8 +250,12 @@ int ICM426XX_Configure(uint8_t is_low_noise_mode,
 
 void ICM426XX_handleFifoPacket_cb(inv_icm426xx_sensor_event_t * event);
 
+esp_err_t ICM426XX_resetFifo(void);
 int ICM426XX_readFifo(void);
 
+esp_err_t ICM426XX_sensor_en_all(void);
+
+esp_err_t ICM426XX_set_fifo_threshold(uint16_t threshold);
 esp_err_t ICM426XX_configure_fifo(icm426xx_fifo_conf_t *fifocfg);
 
 /** @brief 	Prints to console the interrupt configuration of the device
@@ -258,10 +269,13 @@ esp_err_t ICM426XX_print_dev_int1_config(uint32_t devType, esp_log_level_t level
 esp_err_t ICM426XX_get_dev_int1_config(inv_icm426xx_interrupt_parameter_t *intconf);
 esp_err_t ICM426XX_set_dev_int1_config(inv_icm426xx_interrupt_parameter_t *intconf);
 
+esp_err_t ICM426XX_dev_reset(void);
+void ICM426XX_set_I2C_addr(uint8_t addr);
 esp_err_t ICM426XX_driver_init(struct inv_icm426xx_serif *icm_serif, char *devName);
 esp_err_t ICM426XX_create_driver_task(void (*handleTask)(void *pvParams), TaskHandle_t *sICMtask, int suspend);
 esp_err_t ICM426XX_use_fsync(int useFsync);
 
 esp_err_t ICM426XX_readreg(uint8_t reg, uint32_t len, uint8_t * buf);
+esp_err_t ICM426XX_set_reg_bank(uint8_t bank);
 
 #endif //#ifndef __ICM426XX_H__

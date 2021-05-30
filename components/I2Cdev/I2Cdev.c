@@ -5,82 +5,111 @@
 #include "sdkconfig.h"
 #include "esp_log.h"
 #include "string.h"
+#include "esp_err.h"
 
 esp_err_t inited = ESP_FAIL; //checker to see if I2Cdev_init() has been called before
+uint32_t timeOut = 10;
 
 #define I2C_TAG "I2Cdev"
 
-#define I2C_CHECK(ret)  if(ret) {                                             \
-        ESP_LOGD(I2C_TAG,"%s(%d): %s", __FUNCTION__, __LINE__, esp_err_to_name(ret));                   \
-        return (ret);                                                                  \
-        }
+#define I2C_CHECK_RET(ret)  do{esp_err_t err_rc_ = (ret); if(err_rc_ != ESP_OK) {                    \
+        ESP_LOGE(I2C_TAG,"%s(%d)=%d: %s", __FUNCTION__, __LINE__, err_rc_, esp_err_to_name(err_rc_));    \
+        return (err_rc_);}                                                                           \
+        } while(0)
+
+#define I2C_CHECK(ret)  do{esp_err_t err_rc_ = (ret); if(err_rc_ != ESP_OK) {                        \
+        ESP_LOGE(I2C_TAG,"%s(%d)=%d: %s", __FUNCTION__, __LINE__, err_rc_, esp_err_to_name(err_rc_));    \
+        }} while(0)
 
 esp_err_t I2Cdev_writeByte(uint8_t devAdd, uint8_t regAddr, uint8_t data) {
 	i2c_cmd_handle_t cmd = {0};
 
 	cmd = i2c_cmd_link_create();
 	I2C_CHECK(i2c_master_start(cmd));
-	I2C_CHECK(i2c_master_write_byte(cmd, (devAdd << 1) | I2C_MASTER_WRITE, 1));
+	I2C_CHECK(i2c_master_write_byte(cmd, (devAdd << 1), 1));
 	I2C_CHECK(i2c_master_write_byte(cmd, regAddr, 1));
 	I2C_CHECK(i2c_master_write_byte(cmd, data, 1));
 	I2C_CHECK(i2c_master_stop(cmd));
-	I2C_CHECK(i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000/portTICK_PERIOD_MS));
+	I2C_CHECK(i2c_master_cmd_begin(I2C_NUM_0, cmd, timeOut/portTICK_PERIOD_MS));
 	i2c_cmd_link_delete(cmd);
 
 	return ESP_OK;
 }
 
 esp_err_t I2Cdev_SelectRegister(uint8_t dev, uint8_t reg){
+	esp_err_t ret = ESP_OK;
 	i2c_cmd_handle_t cmd = {0};
 
 	cmd = i2c_cmd_link_create();
-	I2C_CHECK(i2c_master_start(cmd));
-	I2C_CHECK(i2c_master_write_byte(cmd, (dev << 1) | I2C_MASTER_WRITE, 1));
-	I2C_CHECK(i2c_master_write_byte(cmd, reg, 1));
-	I2C_CHECK(i2c_master_stop(cmd));
-	I2C_CHECK(i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000/portTICK_PERIOD_MS));
+	i2c_master_start(cmd);
+	i2c_master_write_byte(cmd, dev, 1);
+	i2c_master_write_byte(cmd, reg, 1);
+	i2c_master_stop(cmd);
+	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, timeOut/portTICK_PERIOD_MS);
 	i2c_cmd_link_delete(cmd);
-	return ESP_OK;
+	I2C_CHECK(ret);
+	return ret;
 }
 
-esp_err_t I2Cdev_writeBytes(uint8_t devAdd, uint8_t regAddr, uint32_t length, uint8_t *data){
-	i2c_cmd_handle_t cmd = {0};
-
-	cmd = i2c_cmd_link_create();
-	I2C_CHECK(i2c_master_start(cmd));
-	I2C_CHECK(i2c_master_write_byte(cmd, (devAdd << 1) | I2C_MASTER_WRITE, 1));
-	I2C_CHECK(i2c_master_write_byte(cmd, regAddr, 1));
-	I2C_CHECK(i2c_master_write(cmd, data, (size_t)(length-1), 0));
-	I2C_CHECK(i2c_master_write_byte(cmd, data[length-1], 1));
-	I2C_CHECK(i2c_master_stop(cmd));
-	I2C_CHECK(i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000/portTICK_PERIOD_MS));
+esp_err_t I2Cdev_writeBytes(uint8_t devAdd, uint8_t regAddr, uint32_t length, uint8_t *data)
+{
+	esp_err_t ret = ESP_OK;
+	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+	i2c_master_start(cmd);
+	i2c_master_write_byte(cmd, devAdd << 1, 1);
+	i2c_master_write_byte(cmd, regAddr, 1);
+	if (length > 1)
+	{
+		i2c_master_write(cmd, data, (size_t)(length-1), 0);
+		i2c_master_write_byte(cmd, data[length-1], 1);
+	}
+	else
+	{
+		//ESP_LOGW(I2C_TAG, "DEB: byte: 0x%02X at addr: 0x%02X", *data, regAddr);
+		i2c_master_write_byte(cmd, data[0], 1);
+	}
+	i2c_master_stop(cmd);
+	vTaskDelay(1);
+	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, timeOut / portTICK_PERIOD_MS);
 	i2c_cmd_link_delete(cmd);
-	return ESP_OK;
+	I2C_CHECK(ret);
+	return ret;
 }
 
-uint8_t I2Cdev_readBytes(uint8_t devAdd, uint8_t regAddr, uint32_t length, uint8_t *data) {
-	i2c_cmd_handle_t cmd = {0};
-	I2C_CHECK(I2Cdev_SelectRegister(devAdd, regAddr));
+esp_err_t I2Cdev_readBytes(uint8_t devAdd, uint8_t regAddr, uint32_t length, uint8_t *data)
+{
+	esp_err_t ret = ESP_OK;
+	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+	i2c_master_start(cmd);
+	i2c_master_write_byte(cmd, devAdd << 1, 1);
+	i2c_master_write_byte(cmd, regAddr, 1);
+	i2c_master_start(cmd);
+	i2c_master_write_byte(cmd, (devAdd << 1)| 0x01, 1);
 
-	cmd = i2c_cmd_link_create();
-	I2C_CHECK(i2c_master_start(cmd));
-	I2C_CHECK(i2c_master_write_byte(cmd, (devAdd << 1) | I2C_MASTER_READ, 1));
+	if (length > 1)
+	{
+		/*
+	i2c_master_read(cmd, data, length-1, 0));
+	i2c_master_read_byte(cmd, data+length-1, 1));
+	*/
+		i2c_master_read(cmd, data, length, I2C_MASTER_LAST_NACK);
+	}
+	else
+	{
+		i2c_master_read_byte(cmd, data, I2C_MASTER_NACK);
+	}
 
-	if(length>1)
-		I2C_CHECK(i2c_master_read(cmd, data, length-1, 0));
-
-	I2C_CHECK(i2c_master_read_byte(cmd, data+length-1, 1));
-
-	I2C_CHECK(i2c_master_stop(cmd));
-	I2C_CHECK(i2c_master_cmd_begin(I2C_NUM_0, cmd, 1000/portTICK_PERIOD_MS));
+	i2c_master_stop(cmd);
+	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, timeOut / portTICK_PERIOD_MS);
 	i2c_cmd_link_delete(cmd);
-
-	return length;
+	I2C_CHECK(ret);
+	return ret;
 }
 
-uint8_t I2Cdev_readByte(uint8_t devAdd, uint8_t regAddr) {
+uint8_t I2Cdev_readByte(uint8_t devAdd, uint8_t regAddr)
+{
 	uint8_t data;
-    I2Cdev_readBytes(devAdd, regAddr, 1, &data);
+	I2Cdev_readBytes(devAdd, regAddr, 1, &data);
 	return data;
 }
 
@@ -203,7 +232,7 @@ esp_err_t I2Cdev_scan(uint8_t *foundAddr, int size)
 	for (i=3; i< 0x78; i++) {
 		i2c_cmd_handle_t cmd = i2c_cmd_link_create();
 		i2c_master_start(cmd);
-		i2c_master_write_byte(cmd, (i << 1) | I2C_MASTER_WRITE, 1 /* expect ack */);
+		i2c_master_write_byte(cmd, i << 1, 1 /* expect ack */);
 		i2c_master_stop(cmd);
 
 		espRc = i2c_master_cmd_begin(I2C_NUM_0, cmd, 10/portTICK_PERIOD_MS);

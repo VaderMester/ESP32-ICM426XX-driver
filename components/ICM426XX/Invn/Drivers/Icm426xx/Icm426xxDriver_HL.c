@@ -762,7 +762,7 @@ int inv_icm426xx_set_config_int1(struct inv_icm426xx *s, inv_icm426xx_interrupt_
 	int status = 0;
 	uint8_t data[4] = {0};
 
-	status |= inv_icm426xx_read_reg(s, MPUREG_INT_SOURCE0, 2, data); /* burst read int_source0/int_source1 */
+	status |= inv_icm426xx_read_reg(s, MPUREG_INT_SOURCE0, 2, &data[0]); /* burst read int_source0/int_source1 */
 	status |= inv_icm426xx_set_reg_bank(s, 4);
 	status |= inv_icm426xx_read_reg(s, MPUREG_INT_SOURCE6_B4, 1, &data[2]); /* switch to bank4 for int_source6 */
 
@@ -809,8 +809,8 @@ int inv_icm426xx_set_config_int1(struct inv_icm426xx *s, inv_icm426xx_interrupt_
 
 		status |= inv_icm426xx_write_reg(s, MPUREG_INT_SOURCE6_B4, 1, &data[2]); /* start with int_source6 since we are still in bank4 */
 		status |= inv_icm426xx_set_reg_bank(s, 0);
-		status |= inv_icm426xx_write_reg(s, MPUREG_INT_SOURCE0, 2, data); /* burst write int_source0/int_source1 */
-		status |= inv_icm426xx_write_reg(s, MPUREG_INT_CONFIG, 1, data);  /* burst write int_source0/int_source1 */
+		status |= inv_icm426xx_write_reg(s, MPUREG_INT_SOURCE0, 2, &data[0]); /* burst write int_source0/int_source1 */
+		status |= inv_icm426xx_write_reg(s, MPUREG_INT_CONFIG, 1, &data[3]);  /* burst write int_source0/int_source1 */
 	}
 	return status;
 }
