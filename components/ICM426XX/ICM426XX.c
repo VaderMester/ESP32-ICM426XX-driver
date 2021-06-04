@@ -25,11 +25,12 @@
 #include "esp_system.h"
 #include "esp_sntp.h"
 #include "esp_log.h"
+#include "malloc_local.h"
 
 /* Helper macros to help better error checking */
 #if CONFIG_ICM426XX_DEBUG_LOG_LEVEL > 0
 #define ERR_RET(val) do{ int v = (val); if(v != 0) {return (v);}}while(0)
-#define ERR_LOG_FUNC(val) do{ int v = (val); if(v) {ESP_LOG_LEVEL((esp_log_level_t)CONFIG_ICM426XX_DEBUG_LOG_LEVEL, LOGNAME, "Error in %s(%d): %d", __FUNCTION__, __LINE__, v)} while(0)
+#define ERR_LOG_FUNC(val) do{ int v = (val); if(v) {ESP_LOG_LEVEL((esp_log_level_t)CONFIG_ICM426XX_DEBUG_LOG_LEVEL, LOGNAME, "Error in %s(%d): %d", __FUNCTION__, __LINE__, v);}} while(0)
 #define ERR_LOG_FUNC_RET(val) do {int v = (val); if(v) {ESP_LOG_LEVEL((esp_log_level_t)CONFIG_ICM426XX_DEBUG_LOG_LEVEL, LOGNAME, "Error in %s(%d): %d", __FUNCTION__, __LINE__, v); return v;}}while(0)
 #define ERR_LOG_MSG_RET(val, fmt, ...) do { int v = (val); if(v) {ESP_LOG_LEVEL((esp_log_level_t)CONFIG_ICM426XX_DEBUG_LOG_LEVEL, LOGNAME, fmt, ## __VA_ARGS__); return v;}}while(0)
 #elif CONFIG_ICM426XX_DEBUG_LOG_LEVEL == 0
@@ -40,27 +41,11 @@
 #endif // CONFIG_ICM426XX_DEBUG_LOG_LEVEL > 0
 
 #define RAD_TO_DEG(rad) ((float)rad * 57.2957795131)
+#define FLOAT_TO_INT(x) (((x)>=0)?(int)((x)+0.5):(int)((x)-0.5))
 
 #define ESP_INTR_FLAG_DEFAULT 0
 
 #define ICM426XX_BUS_ADDR CONFIG_ICM426XX_DEV_ADDRESS
-uint8_t devAddr;
-
-/* Full Scale Range */
-#if 0
-#if IS_HIGH_RES_MODE
-	#if defined(ICM42686)
-		static const int32_t acc_fsr = 32;   /* +/- 32g */
-		static const int32_t gyr_fsr = 4000; /* +/- 4000dps */
-	#else
-		static const int32_t acc_fsr = 16;   /* +/- 16g */
-		static const int32_t gyr_fsr = 2000; /* +/- 2000dps */
-	#endif
-#else
-	static const int32_t acc_fsr = 4;        /* +/- 4g */
-	static const int32_t gyr_fsr = 2000;     /* +/- 2000dps */
-#endif
-#endif
 
 /*
  * ICM mounting matrix
@@ -76,10 +61,6 @@ static int32_t icm_mounting_matrix[9] = { (1<<30),     0,           0,
                                            0,          0,          (1<<30) };
 #endif
 
-
-/* Just a handy variable to handle the icm426xx object */
-static struct inv_icm426xx icm_driver;
-
 /* structure allowing to handle clock calibration */
 static clk_calib_t clk_calib;
 
@@ -87,12 +68,14 @@ static clk_calib_t clk_calib;
 RINGBUFFER(timestamp_buffer, 64, uint64_t);
 
 uint8_t intcnt = 0;
+uint8_t ICM426XX_devAddr = 0;
 
 /* MUX for entering critical section */
 static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 
 
-const uint8_t qSize = 10;
+//const uint8_t qSize = 10;
+const uint8_t qSize = 2;
 
 //Helper for iterating through interrupt stauts bits
 static const uint8_t intr_helper[ICM426XX_NUM_INTRS] = {
@@ -276,7 +259,7 @@ inv_icm426xx_get_time_us(void)
 void inv_icm426xx_sleep_us(uint32_t us)
 {
 	uint64_t end = ESP32_get_time_us() + us; //call this here to get a more accurate start of delay;
-	if (us > (portTICK_PERIOD_MS * 500))
+	if (1000 >= us)
 	{
 		while(end > ESP32_get_time_us());
 	}
@@ -288,104 +271,9 @@ void inv_icm426xx_sleep_us(uint32_t us)
 
 /*
  * --------------------------------------------------------------------------------------
- *  ESP32 SPECIFIC HAL Functions 
+ *  ESP32 SPECIFIC Functions 
  * --------------------------------------------------------------------------------------
  */
-/** @brief Below are the I2C HAL functions compatible with the "Icm426xxTransport.h"
-struct inv_icm426xx_serif {
-	void *     context;
-	int      (*read_reg)(struct inv_icm426xx_serif * serif, uint8_t reg, uint8_t * buf, uint32_t len);
-	int      (*write_reg)(struct inv_icm426xx_serif * serif, uint8_t reg, const uint8_t * buf, uint32_t len);
-	int      (*configure)(struct inv_icm426xx_serif * serif);
-	uint32_t   max_read;
-	uint32_t   max_write;
-	ICM426XX_SERIAL_IF_TYPE_t serif_type;
-};
-*/
-/**
- * @brief This is to connect in ESP32 HW functions for reading registers from the ICM426XX device
- * @param serif:  We only use ICM426XX_SERIAL_IF_TYPE_t serif_type to brach for the properly
- * @param reg:    address of register to be read
- * @param buf:    buffer pointer for data to be stored
- * @param len:    read length
- * 
- * @return: 0: OK
- *          Everything return that is not 0, means an error
- */
-int ESP32_HAL_read_reg(struct inv_icm426xx_serif *serif, uint8_t reg, uint8_t *buf, uint32_t len)
-{
-	switch (serif->serif_type)
-	{
-	case ICM426XX_AUX1_SPI3:
-	case ICM426XX_AUX1_SPI4:
-	case ICM426XX_AUX2_SPI3:
-	case ICM426XX_UI_SPI4:
-		//TODO: Add SPI later
-		return -10;
-	case ICM426XX_UI_I2C:
-		return (I2Cdev_readBytes(devAddr, reg, len, buf));
-	default:
-		return -1;
-	}
-	return 1;
-}
-
-/**
- * @brief This is to connect in ESP32 HW functions for writing to registers of ICM426XX device
- * @param serif:  We only use ICM426XX_SERIAL_IF_TYPE_t serif_type to brach for the properly
- * @param reg:    address of register to be read
- * @param buf:    buffer pointer for data to be stored
- * @param len:    read length
- * 
- * @return: 0: OK
- *          Everything return that is not 0, means an error
- */
-int ESP32_HAL_write_reg(struct inv_icm426xx_serif *serif, uint8_t reg, uint8_t *buf, uint32_t len)
-{
-	switch (serif->serif_type)
-	{
-	case ICM426XX_AUX1_SPI3:
-	case ICM426XX_AUX1_SPI4:
-	case ICM426XX_AUX2_SPI3:
-	case ICM426XX_UI_SPI4:
-		//TODO: Add SPI later
-		return -10;
-	case ICM426XX_UI_I2C:
-		return I2Cdev_writeBytes(devAddr, reg, len, buf);
-	default:
-		return -1;
-	}
-	return 1;
-}
-
-int ESP32_icm_serif_init(struct inv_icm426xx_serif *serif)
-{
-	int rc;
-	switch (serif->serif_type)
-	{
-	case ICM426XX_AUX1_SPI3:
-	case ICM426XX_AUX1_SPI4:
-	case ICM426XX_AUX2_SPI3:
-	case ICM426XX_UI_SPI4:
-		//TODO: Add SPI later
-		return -10;
-	case ICM426XX_UI_I2C:
-		rc = I2Cdev_init(-1, -1);
-		if (rc != ESP_OK)
-		{
-			ESP_LOGE(LOGNAME, "Failed to init I2Cdev: %s", esp_err_to_name(rc));
-			return -1;
-		}
-		else
-		{
-			ESP_LOGI(LOGNAME, "I2C driver initialized!");
-			return 0;
-		}
-	default:
-		return -1;
-	}
-	return 1;
-}
 
 static esp_err_t ESP32_ICM426XX_nvs_init(void)
 {
@@ -570,7 +458,6 @@ static void IRAM_ATTR ICM426XX_irq_cb_default(void *arg)
 			RINGBUFFER_PUSH(&timestamp_buffer, &timestamp);
 		//We increment the signal semaphore, to indicate an interrupt happened.
 		xSemaphoreGiveFromISR(irqSem, NULL);
-		intcnt = 0;
 }
 
 esp_err_t ICM426XX_install_Int1_isr(gpio_isr_t int1_isr_handler, inv_icm426xx_interrupt_parameter_t *int_config)
@@ -610,38 +497,6 @@ esp_err_t ICM426XX_install_Int1_isr(gpio_isr_t int1_isr_handler, inv_icm426xx_in
 	return rc;
 }
 
-
-/**
- * @brief	Read interrupt stauts registers from ICM device. When an interrupt cause is found,
- * 			the function will write it to the buffer passed as the first argument.
- * 			When the function finished, the function set the num_ints argumetn with the number of interrupts found.
- * 
- * @param	statuses - Buffer pointer to store found interrupt flags
- * @param	bufsize	- size of the buffer pointed to statuses argument
- * @param	num_ints - Pointer to a byte variable, which will store the number of the found interrupts.
- * 						The number returned in with this argument is not dependent of the size of the buffer.
- * 						If the buffer is too small to hold all interrupt event&icm_driver, users can check which
- * 						events might have occured, because the intterupt flags are read sequentially.
- * 						The last interrupt flag represents the last in the sequence, which guarantees that
- * 						all interrupt events preceeding the last is already checked.
- * 
- * @return ESP_OK - Bus was read correctly, data is valid
- * 					Everything returned are error&icm_driver, the correct errors returned form the bus transaction.
- * 						
- * @example ICM426XX_intr_status_t intstats[ICM426XX_NUM_INTRS];
- * 			uint8_t intnum;
- * 			ICM426XX_get_intr_events(&intstats[0], ICM426XX_NUM_INTRS, &intnum);
- * 			
- * 			for(int i = 0; i < intnum, i++){
- * 				switch(instats[i]) {
- * 					case INTR_ICM426XX_UI_FSYNC:
- * 					.
- * 					.
- * 				}
- * 			}
- * 			.
- * 			.
-*/
 int ICM426XX_get_intr_events(ICM426XX_intr_status_t *statuses, int bufsize)
 {
 	if(!statuses){
@@ -650,7 +505,7 @@ int ICM426XX_get_intr_events(ICM426XX_intr_status_t *statuses, int bufsize)
 	uint8_t int_stat[3];
 	ERR_LOG_FUNC_RET(inv_icm426xx_read_reg(&icm_driver, MPUREG_INT_STATUS, 1, &int_stat[0]));
 	ERR_LOG_FUNC_RET(inv_icm426xx_read_reg(&icm_driver, MPUREG_INT_STATUS2, 2, &int_stat[1])); //reads both STAUS2 and STATUS3 in sequence
-	ESP_LOGI(LOGNAME, "INT_STATUSx: 0x%02X, 0x%02X, 0x%02X", int_stat[0], int_stat[1], int_stat[2]);
+	ESP_LOGD(LOGNAME, "INT_STATUSx: 0x%02X, 0x%02X, 0x%02X", int_stat[0], int_stat[1], int_stat[2]);
 	uint8_t j = 0;
 	uint8_t a = 0;
 	for(int i = 0; i < ICM426XX_NUM_INTRS; i++)
@@ -677,6 +532,12 @@ esp_err_t ICM426XX_readreg(uint8_t reg, uint32_t len, uint8_t * buf)
 {
 	return inv_icm426xx_read_reg(&icm_driver, reg, len, buf);
 }
+
+esp_err_t ICM426XX_writereg(uint8_t reg, uint32_t len, uint8_t * buf)
+{
+	return inv_icm426xx_write_reg(&icm_driver, reg, len, buf);
+}
+
 
 esp_err_t ICM426XX_set_reg_bank(uint8_t bank)
 {
@@ -714,7 +575,7 @@ int ICM426XX_ConfigureUseFifo(uint8_t is_low_noise_mode,
 						uint8_t is_rtc_mode)
 {
 	int rc = 0;
-	
+
 	if (!is_rtc_mode) {
 		/*
 		 * Compute the time drift between the MCU and ICM clock
@@ -763,10 +624,538 @@ int ICM426XX_ConfigureUseFifo(uint8_t is_low_noise_mode,
 	return rc;
 }
 
+esp_err_t ICM426XX_resetFifo(void)
+{
+	return inv_icm426xx_reset_fifo(&icm_driver);
+}
 
+esp_err_t ICM426XX_convert_accel2mg(int32_t acc[3])
+{
+	float scaler, val;
+	switch (icm_driver.accel_fsr)
+	{
+	case ICM426XX_ACCEL_CONFIG0_FS_SEL_2g:
+		scaler = 16.384;
+		break;
+	case ICM426XX_ACCEL_CONFIG0_FS_SEL_4g:
+		scaler = 8.192;
+		break;
+	case ICM426XX_ACCEL_CONFIG0_FS_SEL_8g:
+		scaler = 4.096;
+		break;
+	case ICM426XX_ACCEL_CONFIG0_FS_SEL_16g:
+		scaler = 2.048;
+		break;
+#ifdef ICM42686
+	case ICM426XX_ACCEL_CONFIG0_FS_SEL_32g:
+		scaler = 1.024;
+		break;
+#endif
+	default:
+		ESP_LOGD(LOGNAME, "Conversion error: Accel FSR not set");
+		return ESP_FAIL;
+	}
+	for (int i = 0; i < 3; i++)
+	{
+		val = acc[i] / scaler;
+		acc[i] = FLOAT_TO_INT(val);
+	}
+	return ESP_OK;
+}
+
+esp_err_t ICM426XX_convert_gyro2dps(int32_t gyr[3])
+{
+	float scaler, val;
+	switch (icm_driver.gyro_fsr)
+	{
+	case ICM426XX_GYRO_CONFIG0_FS_SEL_16dps:
+		scaler = 2048;
+		break;
+	case ICM426XX_GYRO_CONFIG0_FS_SEL_31dps:
+		scaler = 1024;
+		break;
+	case ICM426XX_GYRO_CONFIG0_FS_SEL_62dps:
+		scaler = 528.52;
+		break;
+	case ICM426XX_GYRO_CONFIG0_FS_SEL_250dps:
+		scaler = 131.072;
+		break;
+	case ICM426XX_GYRO_CONFIG0_FS_SEL_500dps:
+		scaler = 65.536;
+		break;
+	case ICM426XX_GYRO_CONFIG0_FS_SEL_1000dps:
+		scaler = 32.768;
+		break;
+	case ICM426XX_GYRO_CONFIG0_FS_SEL_2000dps:
+		scaler = 16.384;
+		break;
+#ifdef ICM42686
+	case ICM426XX_GYRO_CONFIG0_FS_SEL_4000dps:
+		scaler = 8.192;
+		break;
+#endif
+	default:
+		ESP_LOGD(LOGNAME, "Conversion error: Accel FSR not set");
+		return ESP_FAIL;
+	}
+	for (int i = 0; i < 3; i++)
+	{
+		val = gyr[i] / scaler;
+		gyr[i] = FLOAT_TO_INT(val);
+	}
+	return ESP_OK;
+}
+
+void ICM426XX_delete_ag_buffer(ag_buffer_t *buffer)
+{
+	if (buffer)
+	{
+		if(buffer->data) free_local(buffer->data);
+		free_local(buffer);
+	}
+}
+
+ag_buffer_t* ICM426XX_readFifo(uint8_t converted)
+{
+	/*
+	 * Extract packets from FIFO. Callback defined at init time (i.e. 
+	 * HandleInvDeviceFifoPacket) will be called for each valid packet extracted from 
+	 * FIFO.
+	 */
+	int status = 0;
+	uint8_t data[2];
+	uint16_t packet_count_i, packet_count = 0;
+	uint16_t packet_size = FIFO_HEADER_SIZE + FIFO_ACCEL_DATA_SIZE + FIFO_GYRO_DATA_SIZE + FIFO_TEMP_DATA_SIZE + FIFO_TS_FSYNC_SIZE;
+	uint64_t irq_timestamp = 0, extended_timestamp;
+	fifo_header_t *header;
+
+	ag_buffer_t *ret = malloc_local(sizeof(ag_buffer_t));
+	if (ret == NULL)
+		return NULL;
+	
+	ret->err = 0;
+	ag_sensor_data_t *dp;
+
+	/* FIFO record mode configured at driver init, so we read packet number, not byte count */
+	status = ICM426XX_set_reg_bank(0);
+	status |= inv_icm426xx_read_reg(&icm_driver, MPUREG_FIFO_COUNTH, 2, data);
+	if (status != INV_ERROR_SUCCESS)
+	{
+		ERR_LOG_FUNC(status);
+		ret->err = status;
+		return ret;
+	}
+	inv_icm426xx_format_data(ICM426XX_INTF_CONFIG0_DATA_LITTLE_ENDIAN, data, &packet_count);
+	if (packet_count > 0)
+	{
+		ret->pcnt = (uint16_t)packet_count;
+		/* Read FIFO only when data is expected in FIFO */
+		/* fifo_idx type variable must be large enough to parse the FIFO_MIRRORING_SIZE */
+		uint16_t fifo_idx = 0;
+
+		if (icm_driver.fifo_highres_enabled)
+			packet_size = FIFO_20BYTES_PACKET_SIZE;
+
+		ret->data = malloc_local(sizeof(ag_sensor_data_t) * packet_count);
+		if (ret->data == NULL)
+		{
+			ret->err = ESP_ERR_NO_MEM;
+			return ret;
+		}
+		dp = ret->data;
+
+		if (icm_driver.transport.serif.serif_type == ICM426XX_UI_I3C)
+		{
+			/* in case of I3C, need to read packet by packet since INT is embedded on protocol so this can 
+				happen that FIFO read is interrupted to handle IBI, and in that case FIFO is partially read.
+				To handle this, 2 solution :
+				- handle fifo lost packet & partial read
+				- read packet by packet
+				2nd solution prefered here because less heavy from driver point of view but it is less optimal
+				for the timing because we have to initiate N transactions in any case */
+			for (packet_count_i = 0; packet_count_i < packet_count; packet_count_i++)
+			{
+				if (!inv_icm426xx_read_reg(&icm_driver, MPUREG_FIFO_DATA, packet_size, &icm_driver.fifo_data[packet_count_i * packet_size]))
+				{
+					/* sensor data is in FIFO according to FIFO_COUNT but failed to read FIFO,
+							  reset FIFO and try next chance */
+					inv_icm426xx_reset_fifo(&icm_driver);
+					ret->err = ESP_FAIL;
+					return ret;
+				}
+			}
+		}
+		else
+		{
+			status |= inv_icm426xx_read_reg(&icm_driver, MPUREG_FIFO_DATA, packet_size * packet_count, icm_driver.fifo_data);
+			if (status)
+			{
+				/* sensor data is in FIFO according to FIFO_COUNT but failed to read FIFO,
+						  reset FIFO and try next chance */
+				inv_icm426xx_reset_fifo(&icm_driver);
+				ERR_LOG_FUNC(status);
+				ret->err = status;
+				return ret;
+			}
+		}
+
+		for (packet_count_i = 0; packet_count_i < packet_count; packet_count_i++)
+		{
+			inv_icm426xx_sensor_event_t event;
+			event.sensor_mask = 0;
+
+			header = (fifo_header_t *)&(icm_driver.fifo_data[fifo_idx]);
+			fifo_idx += FIFO_HEADER_SIZE;
+
+			/* Decode packet */
+			if (header->bits.msg_bit)
+			{
+				/* MSG BIT set in FIFO header, Resetting FIFO */
+				inv_icm426xx_reset_fifo(&icm_driver);
+				ERR_LOG_FUNC(status);
+				ret->err = INV_ERROR;
+				return ret;
+			}
+
+			if (header->bits.accel_bit)
+			{
+				inv_icm426xx_format_data(icm_driver.endianess_data, &(icm_driver.fifo_data[0 + fifo_idx]), (uint16_t *)&event.accel[0]);
+				inv_icm426xx_format_data(icm_driver.endianess_data, &(icm_driver.fifo_data[2 + fifo_idx]), (uint16_t *)&event.accel[1]);
+				inv_icm426xx_format_data(icm_driver.endianess_data, &(icm_driver.fifo_data[4 + fifo_idx]), (uint16_t *)&event.accel[2]);
+				fifo_idx += FIFO_ACCEL_DATA_SIZE;
+			}
+
+			if (header->bits.gyro_bit)
+			{
+				inv_icm426xx_format_data(icm_driver.endianess_data, &(icm_driver.fifo_data[0 + fifo_idx]), (uint16_t *)&event.gyro[0]);
+				inv_icm426xx_format_data(icm_driver.endianess_data, &(icm_driver.fifo_data[2 + fifo_idx]), (uint16_t *)&event.gyro[1]);
+				inv_icm426xx_format_data(icm_driver.endianess_data, &(icm_driver.fifo_data[4 + fifo_idx]), (uint16_t *)&event.gyro[2]);
+				fifo_idx += FIFO_GYRO_DATA_SIZE;
+			}
+
+			if ((header->bits.accel_bit) || (header->bits.gyro_bit))
+			{
+				if (header->bits.twentybits_bit)
+				{
+					inv_icm426xx_format_data(icm_driver.endianess_data, &icm_driver.fifo_data[0 + fifo_idx], (uint16_t *)&event.temperature);
+					fifo_idx += FIFO_TEMP_DATA_SIZE + FIFO_TEMP_HIGH_RES_SIZE;
+
+					/* new temperature data */
+					if (event.temperature != INVALID_VALUE_FIFO)
+						event.sensor_mask |= (1 << INV_ICM426XX_SENSOR_TEMPERATURE);
+				}
+				else
+				{
+					event.temperature = (int8_t)icm_driver.fifo_data[0 + fifo_idx]; /* cast to int8_t since FIFO is in 16 bits mode (temperature on 8 bits) */
+					fifo_idx += FIFO_TEMP_DATA_SIZE;
+
+					/* new temperature data */
+					if (event.temperature != INVALID_VALUE_FIFO_1B)
+						event.sensor_mask |= (1 << INV_ICM426XX_SENSOR_TEMPERATURE);
+				}
+			}
+
+			if ((header->bits.timestamp_bit) || (header->bits.fsync_bit))
+			{
+				inv_icm426xx_format_data(icm_driver.endianess_data, &icm_driver.fifo_data[0 + fifo_idx], (uint16_t *)&event.timestamp_fsync);
+				fifo_idx += FIFO_TS_FSYNC_SIZE;
+
+				/* new fsync event */
+				/* First FSYNC event after enable is irrelevant
+					 * FSYNC tag and FSYNC data should be ignored on the first ODR after restart.
+					 */
+				if (header->bits.fsync_bit)
+				{
+#if (!INV_ICM426XX_LIGHTWEIGHT_DRIVER)
+					if (icm_driver.fsync_to_be_ignored == 0)
+#endif
+						event.sensor_mask |= (1 << INV_ICM426XX_SENSOR_FSYNC_EVENT);
+				}
+#if (!INV_ICM426XX_LIGHTWEIGHT_DRIVER)
+				icm_driver.fsync_to_be_ignored = 0;
+#endif
+			}
+
+			if (header->bits.accel_bit)
+			{
+				if ((event.accel[0] != INVALID_VALUE_FIFO) &&
+					(event.accel[1] != INVALID_VALUE_FIFO) &&
+					(event.accel[2] != INVALID_VALUE_FIFO))
+				{
+
+					if (header->bits.twentybits_bit)
+					{
+						event.accel_high_res[0] = (icm_driver.fifo_data[0 + fifo_idx] >> 4) & 0xF;
+						event.accel_high_res[1] = (icm_driver.fifo_data[1 + fifo_idx] >> 4) & 0xF;
+						event.accel_high_res[2] = (icm_driver.fifo_data[2 + fifo_idx] >> 4) & 0xF;
+					}
+
+#if (!INV_ICM426XX_LIGHTWEIGHT_DRIVER)
+					if (icm_driver.accel_start_time_us == UINT32_MAX)
+					{
+						event.sensor_mask |= (1 << INV_ICM426XX_SENSOR_ACCEL);
+					}
+					else
+					{
+						if (!header->bits.fsync_bit)
+						{
+							/* First data are noisy after enabling sensor
+								 * Compare start time with current time to notify the event
+								 */
+							if ((inv_icm426xx_get_time_us() - icm_driver.accel_start_time_us) >= ICM426XX_ACC_STARTUP_TIME_US)
+							{
+								icm_driver.accel_start_time_us = UINT32_MAX;
+								event.sensor_mask |= (1 << INV_ICM426XX_SENSOR_ACCEL);
+							}
+						}
+					}
+#else
+					event.sensor_mask |= (1 << INV_ICM426XX_SENSOR_ACCEL);
+#endif
+				}
+			}
+
+			if (header->bits.gyro_bit)
+			{
+				if ((event.gyro[0] != INVALID_VALUE_FIFO) &&
+					(event.gyro[1] != INVALID_VALUE_FIFO) &&
+					(event.gyro[2] != INVALID_VALUE_FIFO))
+				{
+
+					if (header->bits.twentybits_bit)
+					{
+						event.gyro_high_res[0] = (icm_driver.fifo_data[0 + fifo_idx]) & 0xF;
+						event.gyro_high_res[1] = (icm_driver.fifo_data[1 + fifo_idx]) & 0xF;
+						event.gyro_high_res[2] = (icm_driver.fifo_data[2 + fifo_idx]) & 0xF;
+					}
+
+#if (!INV_ICM426XX_LIGHTWEIGHT_DRIVER)
+					if (icm_driver.gyro_start_time_us == UINT32_MAX)
+					{
+						event.sensor_mask |= (1 << INV_ICM426XX_SENSOR_GYRO);
+					}
+					else
+					{
+						if (!header->bits.fsync_bit)
+						{
+							/* First data are noisy after enabling sensor
+								 * Compare start time with current time to notify the event
+								 */
+							if ((inv_icm426xx_get_time_us() - icm_driver.gyro_start_time_us) >= ICM426XX_GYR_STARTUP_TIME_US)
+							{
+								icm_driver.gyro_start_time_us = UINT32_MAX;
+								event.sensor_mask |= (1 << INV_ICM426XX_SENSOR_GYRO);
+							}
+						}
+					}
+#else
+					event.sensor_mask |= (1 << INV_ICM426XX_SENSOR_GYRO);
+#endif
+				}
+			}
+
+			if (header->bits.twentybits_bit)
+				fifo_idx += FIFO_ACCEL_GYRO_HIGH_RES_SIZE;
+
+
+			//portENTER_CRITICAL(&mux);
+			if (!RINGBUFFER_EMPTY(&timestamp_buffer))
+				RINGBUFFER_POP(&timestamp_buffer, &irq_timestamp);
+			//portEXIT_CRITICAL(&mux);
+
+			/*
+			 * Extend the 16-bit timestamp from the Icm426xx FIFO to a 64 bits timestamp.
+			*/
+			inv_helper_extend_timestamp_from_fifo(&icm_driver, &clk_calib, event.timestamp_fsync, irq_timestamp, event.sensor_mask, &extended_timestamp);
+
+			/*
+	 		 * Compute raw data according to the format
+			 */
+			if (icm_driver.fifo_highres_enabled)
+			{
+				dp->accel[0] = (((int32_t)event.accel[0] << 4)) | event.accel_high_res[0];
+				dp->accel[1] = (((int32_t)event.accel[1] << 4)) | event.accel_high_res[1];
+				dp->accel[2] = (((int32_t)event.accel[2] << 4)) | event.accel_high_res[2];
+
+				dp->gyro[0] = (((int32_t)event.gyro[0] << 4)) | event.gyro_high_res[0];
+				dp->gyro[1] = (((int32_t)event.gyro[1] << 4)) | event.gyro_high_res[1];
+				dp->gyro[2] = (((int32_t)event.gyro[2] << 4)) | event.gyro_high_res[2];
+			}
+			else
+			{
+				dp->accel[0] = event.accel[0];
+				dp->accel[1] = event.accel[1];
+				dp->accel[2] = event.accel[2];
+
+				dp->gyro[0] = event.gyro[0];
+				dp->gyro[1] = event.gyro[1];
+				dp->gyro[2] = event.gyro[2];
+			}
+			dp->temp = event.temperature;
+			dp->tmstp = event.timestamp_fsync;
+			ICM426XX_apply_mounting_matrix(icm_mounting_matrix, dp->accel);
+			ICM426XX_apply_mounting_matrix(icm_mounting_matrix, dp->gyro);
+
+			if (converted)
+			{
+				ICM426XX_convert_accel2mg(dp->accel);
+				ICM426XX_convert_gyro2dps(dp->gyro);
+				dp->temp = (event.temperature * 5) + 250; //Make temperature to XX.Y°C
+			}
+			//increment inv_icm426xx_sensor_event_t *p pointer
+			dp++;
+		} /* end of FIFO read for loop */
+	}
+	/*else: packet_count was 0*/
+
+	return ret;
+}
+
+esp_err_t ICM426XX_get_dev_int1_config(inv_icm426xx_interrupt_parameter_t *intconf) {
+	return inv_icm426xx_get_config_int1(&icm_driver, intconf);
+}
+
+
+esp_err_t ICM426XX_set_dev_int1_config(inv_icm426xx_interrupt_parameter_t *intconf)
+{
+	return inv_icm426xx_set_config_int1(&icm_driver, intconf);
+}
+
+esp_err_t ICM426XX_print_dev_int1_config(uint32_t devType, esp_log_level_t level)
+{
+	inv_icm426xx_interrupt_parameter_t intconf = {0};
+	ICM426XX_get_dev_int1_config(&intconf);
+		ESP_LOG_LEVEL(level, LOGNAME, "************** ICM%d CURRENT INTERRUPT CONFIGURATION *************", devType);
+		ESP_LOG_LEVEL(level, LOGNAME, "\tFSYNC: \t%s", intconf.INV_ICM426XX_UI_FSYNC ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tDATA RDY: \t%s", intconf.INV_ICM426XX_UI_DRDY ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tFIFO THS: \t%s", intconf.INV_ICM426XX_FIFO_THS ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tFIFO FULL: \t%s", intconf.INV_ICM426XX_FIFO_FULL ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tSMD: \t%s", intconf.INV_ICM426XX_SMD ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tWOM_X: \t%s", intconf.INV_ICM426XX_WOM_X ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tWOM_Y: \t%s", intconf.INV_ICM426XX_WOM_Y ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tWOM_Z: \t%s", intconf.INV_ICM426XX_WOM_Z ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tSTEP DET: \t%s", intconf.INV_ICM426XX_STEP_DET ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tSTEP COUNT OVERFLOW: \t%s", intconf.INV_ICM426XX_STEP_CNT_OVFL ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tTILT: \t%s", intconf.INV_ICM426XX_TILT_DET ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tSLEEP: \t%s", intconf.INV_ICM426XX_SLEEP_DET ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tWAKE: \t%s", intconf.INV_ICM426XX_WAKE_DET ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tTAP: \t%s", intconf.INV_ICM426XX_TAP_DET ? "Y" : "N");
+		ESP_LOG_LEVEL(level, LOGNAME, "Circuit:");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tPOLARITY: \t%s", intconf.int_pol ? "ACT. HIGH" : "ACT. LOW");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tWAKE: \t%s", intconf.int_drive ? "Push-Pull" : "Open-Drain");
+		ESP_LOG_LEVEL(level, LOGNAME, "\tTAP: \t%s", intconf.int_mode ? "Latched" : "Pulsed");
+		ESP_LOG_LEVEL(level, LOGNAME, "****************** END OF INTERRUPT CONFIGURATION *******************");
+	return ESP_OK;
+}
+
+esp_err_t ICM426XX_dev_reset(void)
+{
+	return inv_icm426xx_device_reset(&icm_driver);
+}
+
+void ICM426XX_set_I2C_addr(uint8_t addr)
+{
+	ICM426XX_devAddr = addr;
+}
+
+esp_err_t ICM426XX_driver_init(struct inv_icm426xx_serif *icm_serif, char *devName)
+{
+	//esp_err_t rc = 0;
+	if(ICM426XX_devAddr == 0) {
+		ESP_LOGE(LOGNAME, "ERROR: I2C address not set!");
+		return ESP_FAIL;
+	}
+	uint8_t who_am_i;
+	ESP_LOGI(LOGNAME, "##### Initing ICM426xx driver, at address 0x%.2x #####", ICM426XX_devAddr);
+	ERR_LOG_MSG_RET(inv_icm426xx_init(&icm_driver, icm_serif, NULL), "!!! ERROR : failed to initialize Icm426xx.");
+	/* Check WHOAMI */
+	ESP_LOGI(LOGNAME, "Check Icm426xx whoami value");
+	ERR_LOG_MSG_RET(ICM426XX_whoami(&who_am_i), "!!! ERROR : failed to read Icm426xx whoami value.");
+
+	char name[9];
+	switch(who_am_i){
+		
+		case ICM42600_WHOAMI:
+			sprintf(name, "ICM42600");
+			break;
+		case ICM42602_WHOAMI:
+			sprintf(name, "ICM42602");
+			break;
+		case ICM42605_WHOAMI:
+			sprintf(name, "ICM42605");
+			break;
+		case ICM42622_WHOAMI:
+			sprintf(name, "ICM42622");
+			break;
+		case ICM42631_WHOAMI:
+			sprintf(name, "ICM42631");
+			break;
+		case ICM42633_WHOAMI:
+			sprintf(name, "ICM42633");
+			break;
+		case ICM42686_WHOAMI:
+			sprintf(name, "ICM42686");
+			break;
+		case ICM42688_WHOAMI:
+			sprintf(name, "ICM42688");
+			break;
+		case ICM42608_WHOAMI:
+			sprintf(name, "ICM42608");
+			break;
+		default:
+			sprintf(name, "unknown");
+	}
+	ESP_LOGI(LOGNAME, "Found device: %s", name);
+	if(who_am_i != ICM_WHOAMI) {
+		ESP_LOGE(LOGNAME, "!!! ERROR :  detected: %s, driver is configured for: ICM%d!!!", name, CONFIG_ICM426XX_DEV_NAME);
+		return ESP_FAIL;
+	}
+	snprintf(devName, strlen(name)+1, "%s", name);
+
+	return ESP_OK;
+}
+
+esp_err_t ICM426XX_set_fifo_threshold(uint16_t threshold)
+{
+	return inv_icm426xx_configure_fifo_wm(&icm_driver, threshold);
+}
+
+esp_err_t ICM426XX_create_driver_task(void (*handleTask)(void *pvParams), TaskHandle_t *sICMtask, int suspend)
+{	
+	qStore = malloc_local(sizeof(ag_buffer_t*) * qSize);
+	xICMeventQ = xQueueCreateStatic(qSize, sizeof(ag_buffer_t*), qStore, &xQbuf);
+	irqSem = xSemaphoreCreateCounting(qSize, 0);
+	BaseType_t stat;
+#ifdef CONFIG_FREERTOS_UNICORE
+	stat = xTaskCreate(handleTask, CONFIG_ICM426XX_TASK_NAME, CONFIG_ICM426XX_TASK_STACK_SIZE, NULL, CONFIG_ICM426XX_TASK_PRIORITY, sICMtask);
+#else
+	stat = xTaskCreatePinnedToCore(handleTask, CONFIG_ICM426XX_TASK_NAME, CONFIG_ICM426XX_TASK_STACK_SIZE, NULL, CONFIG_ICM426XX_TASK_PRIORITY, sICMtask, CONFIG_ICM426XX_TASK_CORE_AFFINITY);
+#endif //#ifdef CONFIG_FREERTOS_UNICORE
+	if (stat == pdPASS)
+	{
+		if (suspend)
+		{
+			vTaskSuspend(*sICMtask);
+			ESP_LOGI(LOGNAME, "Task called '%s' created in suspended state!", CONFIG_ICM426XX_TASK_NAME);
+		}
+		else
+		{
+		ESP_LOGI(LOGNAME, "Task called '%s' created in running state!", CONFIG_ICM426XX_TASK_NAME);
+		}
+		return ESP_OK;
+	}
+	return ESP_FAIL;
+}
+
+
+/* --------------------------------------------------------------------------------------
+ *  DEPRECATED
+ * --------------------------------------------------------------------------------------
+*/
+
+#if 0
 void ICM426XX_handleFifoPacket_cb(inv_icm426xx_sensor_event_t * event)
 {
-	ESP_LOGD(LOGNAME, "Called: %s", __FUNCTION__);
 	uint64_t irq_timestamp = 0, extended_timestamp;
 	int32_t accel[3], gyro[3];
 	
@@ -836,7 +1225,7 @@ void ICM426XX_handleFifoPacket_cb(inv_icm426xx_sensor_event_t * event)
 	}
 	*/
 	/* If Queue is full we remove discard the first (oldest) item */
-	if(uxQueueSpacesAvailable(xICMeventQ)) {
+	if(uxQueueSpacesAvailable(xICMeventQ) == 0) {
 		agData_t recv;
 		xQueueReceive(xICMeventQ, &recv, 1);
 	}
@@ -849,11 +1238,6 @@ void ICM426XX_handleFifoPacket_cb(inv_icm426xx_sensor_event_t * event)
 	send.gyr[2] = gyro[2];
 	send.timestamp = extended_timestamp;
 	xQueueSendToBack(xICMeventQ, (void *) &send, 2);
-}
-
-esp_err_t ICM426XX_resetFifo(void)
-{
-	return inv_icm426xx_reset_fifo(&icm_driver);
 }
 
 int ICM426XX_readFifo(void)
@@ -875,7 +1259,6 @@ int ICM426XX_readFifo(void)
 	if (status != INV_ERROR_SUCCESS)
 		return status;
 	inv_icm426xx_format_data(ICM426XX_INTF_CONFIG0_DATA_LITTLE_ENDIAN, data, &packet_count);
-	ESP_LOGW(LOGNAME, "Fifo Read: %d packets", packet_count);
 	if (packet_count > 0)
 	{
 		/* Read FIFO only when data is expected in FIFO */
@@ -1084,130 +1467,6 @@ int ICM426XX_readFifo(void)
 	return packet_count;
 }
 
-esp_err_t ICM426XX_get_dev_int1_config(inv_icm426xx_interrupt_parameter_t *intconf) {
-	return inv_icm426xx_get_config_int1(&icm_driver, intconf);
-}
-
-
-esp_err_t ICM426XX_set_dev_int1_config(inv_icm426xx_interrupt_parameter_t *intconf)
-{
-	return inv_icm426xx_set_config_int1(&icm_driver, intconf);
-}
-
-/** @brief 	Prints to console the interrupt configuration of the device
- *  @note	This function does not read it from the device
- * 	@param 	intconf - interrupt configuration to be printed.
- * 	@param	devType	- 5digit type number
- * 	@param	loglevel - Log level of the function
- */
-esp_err_t ICM426XX_print_dev_int1_config(uint32_t devType, esp_log_level_t level)
-{
-	inv_icm426xx_interrupt_parameter_t intconf = {0};
-	ICM426XX_get_dev_int1_config(&intconf);
-		ESP_LOG_LEVEL(level, LOGNAME, "************** ICM%d CURRENT INTERRUPT CONFIGURATION *************", devType);
-		ESP_LOG_LEVEL(level, LOGNAME, "\tFSYNC: \t%s", intconf.INV_ICM426XX_UI_FSYNC ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tDATA RDY: \t%s", intconf.INV_ICM426XX_UI_DRDY ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tFIFO THS: \t%s", intconf.INV_ICM426XX_FIFO_THS ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tFIFO FULL: \t%s", intconf.INV_ICM426XX_FIFO_FULL ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tSMD: \t%s", intconf.INV_ICM426XX_SMD ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tWOM_X: \t%s", intconf.INV_ICM426XX_WOM_X ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tWOM_Y: \t%s", intconf.INV_ICM426XX_WOM_Y ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tWOM_Z: \t%s", intconf.INV_ICM426XX_WOM_Z ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tSTEP DET: \t%s", intconf.INV_ICM426XX_STEP_DET ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tSTEP COUNT OVERFLOW: \t%s", intconf.INV_ICM426XX_STEP_CNT_OVFL ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tTILT: \t%s", intconf.INV_ICM426XX_TILT_DET ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tSLEEP: \t%s", intconf.INV_ICM426XX_SLEEP_DET ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tWAKE: \t%s", intconf.INV_ICM426XX_WAKE_DET ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tTAP: \t%s", intconf.INV_ICM426XX_TAP_DET ? "Y" : "N");
-		ESP_LOG_LEVEL(level, LOGNAME, "Circuit:");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tPOLARITY: \t%s", intconf.int_pol ? "ACT. HIGH" : "ACT. LOW");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tWAKE: \t%s", intconf.int_drive ? "Push-Pull" : "Open-Drain");
-		ESP_LOG_LEVEL(level, LOGNAME, "\tTAP: \t%s", intconf.int_mode ? "Latched" : "Pulsed");
-		ESP_LOG_LEVEL(level, LOGNAME, "****************** END OF INTERRUPT CONFIGURATION *******************");
-	return ESP_OK;
-}
-
-esp_err_t ICM426XX_dev_reset(void)
-{
-	return inv_icm426xx_device_reset(&icm_driver);
-}
-
-void ICM426XX_set_I2C_addr(uint8_t addr)
-{
-	devAddr = addr;
-}
-
-esp_err_t ICM426XX_driver_init(struct inv_icm426xx_serif *icm_serif, char *devName)
-{
-	//esp_err_t rc = 0;
-	if(devAddr == 0) {
-		ESP_LOGE(LOGNAME, "ERROR: I2C address not set!");
-		return ESP_FAIL;
-	}
-	uint8_t who_am_i;
-	ESP_LOGI(LOGNAME, "##### Initing ICM426xx driver, at address 0x%.2x #####", devAddr);
-	ERR_LOG_MSG_RET(inv_icm426xx_init(&icm_driver, icm_serif, ICM426XX_handleFifoPacket_cb), "!!! ERROR : failed to initialize Icm426xx.");
-	/* Check WHOAMI */
-	ESP_LOGI(LOGNAME, "Check Icm426xx whoami value");
-	ERR_LOG_MSG_RET(ICM426XX_whoami(&who_am_i), "!!! ERROR : failed to read Icm426xx whoami value.");
-
-	char name[9];
-	switch(who_am_i){
-		
-		case ICM42600_WHOAMI:
-			sprintf(name, "ICM42600");
-			break;
-		case ICM42602_WHOAMI:
-			sprintf(name, "ICM42602");
-			break;
-		case ICM42605_WHOAMI:
-			sprintf(name, "ICM42605");
-			break;
-		case ICM42622_WHOAMI:
-			sprintf(name, "ICM42622");
-			break;
-		case ICM42631_WHOAMI:
-			sprintf(name, "ICM42631");
-			break;
-		case ICM42633_WHOAMI:
-			sprintf(name, "ICM42633");
-			break;
-		case ICM42686_WHOAMI:
-			sprintf(name, "ICM42686");
-			break;
-		case ICM42688_WHOAMI:
-			sprintf(name, "ICM42688");
-			break;
-		case ICM42608_WHOAMI:
-			sprintf(name, "ICM42608");
-			break;
-		default:
-			sprintf(name, "unknown");
-	}
-	ESP_LOGI(LOGNAME, "Found device: %s", name);
-	if(who_am_i != ICM_WHOAMI) {
-		ESP_LOGE(LOGNAME, "!!! ERROR :  detected: %s, driver is configured for: ICM%d!!!", name, CONFIG_ICM426XX_DEV_NAME);
-		return ESP_FAIL;
-	}
-	snprintf(devName, strlen(name)+1, "%s", name);
-
-	return ESP_OK;
-}
-
-esp_err_t ICM426XX_use_fsync(int useFsync)
-{
-	if (useFsync)
-	{
-		ERR_LOG_MSG_RET(inv_icm426xx_enable_fsync(&icm_driver), "Error when trying to disable Fsync usage");
-	}
-	ERR_LOG_MSG_RET(inv_icm426xx_disable_fsync(&icm_driver), "Error when trying to enable Fsync usage");
-	return ESP_OK;
-}
-
-esp_err_t ICM426XX_set_fifo_threshold(uint16_t threshold)
-{
-	return inv_icm426xx_configure_fifo_wm(&icm_driver, threshold);
-}
 
 esp_err_t ICM426XX_configure_fifo(icm426xx_fifo_conf_t *fifocfg)
 {
@@ -1270,20 +1529,6 @@ esp_err_t ICM426XX_configure_fifo(icm426xx_fifo_conf_t *fifocfg)
 
 			config_ibi.INV_ICM426XX_FIFO_THS = INV_ICM426XX_DISABLE;
 			inv_icm426xx_set_config_ibi(&icm_driver, &config_ibi);
-			/*
-			uint8_t dt[2];
-			dt[0] = (fifocfg->threshold_cnt & 0xFF);
-			dt[1] = fifocfg->threshold_cnt >> 8;
-			ESP_LOGI(LOGNAME, "FIFO_CONFIG2 threshold(%d): Written: 0x%02X lower | 0x%02X upper", fifocfg->threshold_cnt, dt[0], dt[1]);
-			ERR_LOG_FUNC_RET(inv_icm426xx_write_reg(&icm_driver, MPUREG_FIFO_CONFIG2, 2, &dt[0]));
-			inv_icm426xx_read_reg(&icm_driver, MPUREG_FIFO_CONFIG2, 1, &data);
-			ESP_LOGI(LOGNAME, "FIFO_CONFIG(threshold): 0x%02X", &data);
-			*/
-			/* Disable Data Ready Interrupt */
-			//ERR_LOG_FUNC_RET(inv_icm426xx_get_config_int1(&icm_driver, &config_int1));
-			//config_int.INV_ICM426XX_UI_DRDY = INV_ICM426XX_DISABLE;
-			//config_int.INV_ICM426XX_FIFO_THS = INV_ICM426XX_ENABLE;
-			//ERR_LOG_FUNC_RET(inv_icm426xx_set_config_int1(&icm_driver, &config_int1));
 
 #if defined(ICM_FAMILY_CPLUS)
 			/* Set FIFO decimation rate to 0 */
@@ -1316,29 +1561,13 @@ esp_err_t ICM426XX_configure_fifo(icm426xx_fifo_conf_t *fifocfg)
 	return ret;
 }
 
-esp_err_t ICM426XX_create_driver_task(void (*handleTask)(void *pvParams), TaskHandle_t *sICMtask, int suspend)
+esp_err_t ICM426XX_use_fsync(int useFsync)
 {
-	qStore = heap_caps_malloc(sizeof(agData_t) * qSize, MALLOC_CAP_8BIT);
-	xICMeventQ = xQueueCreateStatic(qSize, sizeof(agData_t), qStore, &xQbuf);
-	irqSem = xSemaphoreCreateCounting(qSize, 0);
-	BaseType_t stat;
-#ifdef CONFIG_FREERTOS_UNICORE
-	stat = xTaskCreate(handleTask, CONFIG_ICM426XX_TASK_NAME, CONFIG_ICM426XX_TASK_STACK_SIZE, NULL, CONFIG_ICM426XX_TASK_PRIORITY, sICMtask);
-#else
-	stat = xTaskCreatePinnedToCore(handleTask, CONFIG_ICM426XX_TASK_NAME, CONFIG_ICM426XX_TASK_STACK_SIZE, NULL, CONFIG_ICM426XX_TASK_PRIORITY, sICMtask, CONFIG_ICM426XX_TASK_CORE_AFFINITY);
-#endif //#ifdef CONFIG_FREERTOS_UNICORE
-	if (stat == pdPASS)
+	if (useFsync)
 	{
-		if (suspend)
-		{
-			vTaskSuspend(*sICMtask);
-			ESP_LOGI(LOGNAME, "Task called '%s' created in suspended state!", CONFIG_ICM426XX_TASK_NAME);
-		}
-		else
-		{
-		ESP_LOGI(LOGNAME, "Task called '%s' created in running state!", CONFIG_ICM426XX_TASK_NAME);
-		}
-		return ESP_OK;
+		ERR_LOG_MSG_RET(inv_icm426xx_enable_fsync(&icm_driver), "Error when trying to disable Fsync usage");
 	}
-	return ESP_FAIL;
+	ERR_LOG_MSG_RET(inv_icm426xx_disable_fsync(&icm_driver), "Error when trying to enable Fsync usage");
+	return ESP_OK;
 }
+#endif

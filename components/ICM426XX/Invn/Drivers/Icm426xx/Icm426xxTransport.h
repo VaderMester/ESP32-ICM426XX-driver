@@ -64,6 +64,7 @@ struct inv_icm426xx_serif {
 	int      (*read_reg)(struct inv_icm426xx_serif * serif, uint8_t reg, uint8_t * buf, uint32_t len);
 	int      (*write_reg)(struct inv_icm426xx_serif * serif, uint8_t reg, uint8_t * buf, uint32_t len);
 	int      (*configure)(struct inv_icm426xx_serif * serif);
+	uint8_t	   devAddr;
 	uint32_t   max_read;
 	uint32_t   max_write;
 	ICM426XX_SERIAL_IF_TYPE_t serif_type;

@@ -182,7 +182,10 @@ struct inv_icm426xx {
 	int gyro_st_bias[3];                                          /**< collected bias values (lsb) during self test */
 	int accel_st_bias[3];
 	int st_result;                                                   /**< Flag to keep track if self-test has been already run by storing acc and gyr results */
-
+	ICM426XX_ACCEL_CONFIG0_FS_SEL_t accel_fsr;
+	ICM426XX_GYRO_CONFIG0_FS_SEL_t gyro_fsr;
+	ICM426XX_ACCEL_CONFIG0_ODR_t accel_odr;
+	ICM426XX_GYRO_CONFIG0_ODR_t gyro_odr;
 	uint8_t fifo_data[ICM426XX_FIFO_MIRRORING_SIZE];              /**<  FIFO mirroring memory area */
 
 	uint8_t tmst_to_reg_en_cnt;                                   /**< internal counter to keep track of the timestamp to register access availability */
@@ -193,6 +196,7 @@ struct inv_icm426xx {
 	uint64_t gyro_start_time_us;                                  /**< internal state needed to discard first gyro samples */
 	uint64_t accel_start_time_us;                                 /**< internal state needed to discard first accel samples */
 	uint8_t endianess_data;                                       /**< internal status of data endianess mode to report correctly data */
+
 	uint8_t fifo_highres_enabled;                                 /**< FIFO packets are 20 bytes long */
 	INV_ICM426XX_FIFO_CONFIG_t fifo_is_used;                      /**< Data are get from FIFO or from sensor registers. By default Fifo is used*/
 	

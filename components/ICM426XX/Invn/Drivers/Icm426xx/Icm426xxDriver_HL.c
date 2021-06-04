@@ -1192,7 +1192,7 @@ int inv_icm426xx_set_accel_frequency(struct inv_icm426xx * s, const ICM426XX_ACC
 	accel_cfg_0_reg &= (uint8_t)~BIT_ACCEL_CONFIG0_ODR_MASK;
 	accel_cfg_0_reg |= (uint8_t)frequency;
 	status |= inv_icm426xx_write_reg(s, MPUREG_ACCEL_CONFIG0, 1, &accel_cfg_0_reg);
-	
+	if(!status)	s->accel_odr = frequency;
 	return status;
 }
 
@@ -1204,7 +1204,7 @@ int inv_icm426xx_set_gyro_frequency(struct inv_icm426xx * s, const ICM426XX_GYRO
 	gyro_cfg_0_reg &= (uint8_t)~BIT_GYRO_CONFIG0_ODR_MASK;
 	gyro_cfg_0_reg |= (uint8_t)frequency;
 	status |= inv_icm426xx_write_reg(s, MPUREG_GYRO_CONFIG0, 1, &gyro_cfg_0_reg);
-	
+	if(!status)	s->gyro_odr = frequency;
 	return status;
 }
 
@@ -1216,7 +1216,7 @@ int inv_icm426xx_set_accel_fsr(struct inv_icm426xx * s, ICM426XX_ACCEL_CONFIG0_F
 	accel_cfg_0_reg &= (uint8_t)~BIT_ACCEL_CONFIG0_FS_SEL_MASK;
 	accel_cfg_0_reg |= (uint8_t)accel_fsr_g;
 	status |= inv_icm426xx_write_reg(s, MPUREG_ACCEL_CONFIG0, 1, &accel_cfg_0_reg);
-	
+	if(!status)	s->accel_fsr = accel_fsr_g;
 	return status;
 }
 
@@ -1228,7 +1228,7 @@ int inv_icm426xx_set_gyro_fsr(struct inv_icm426xx * s, ICM426XX_GYRO_CONFIG0_FS_
 	gyro_cfg_0_reg &= (uint8_t)~BIT_GYRO_CONFIG0_FS_SEL_MASK;
 	gyro_cfg_0_reg |= (uint8_t)gyro_fsr_dps;
 	status |= inv_icm426xx_write_reg(s, MPUREG_GYRO_CONFIG0, 1, &gyro_cfg_0_reg);
-	
+	if(!status)	s->gyro_fsr = gyro_fsr_dps;
 	return status;
 }
 

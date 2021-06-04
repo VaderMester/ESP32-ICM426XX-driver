@@ -69,7 +69,6 @@ esp_err_t I2Cdev_writeBytes(uint8_t devAdd, uint8_t regAddr, uint32_t length, ui
 		i2c_master_write_byte(cmd, data[0], 1);
 	}
 	i2c_master_stop(cmd);
-	vTaskDelay(1);
 	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, timeOut / portTICK_PERIOD_MS);
 	i2c_cmd_link_delete(cmd);
 	I2C_CHECK(ret);
